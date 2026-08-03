@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breathe — The CE Broker Alternative for Respiratory Therapists</title>
+    <meta name="description" content="Free CEU tracker built for RTs, by an RRT. Snap a photo, we log the credits. TMB report in one tap. CE Broker auto-sync coming soon.">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #FAFAFA;
+            color: #18181B;
+            line-height: 1.6;
+        }
+        .container { max-width: 600px; margin: 0 auto; padding: 0 24px; }
+
+        /* Hero */
+        .hero {
+            background: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
+            color: white;
+            padding: 60px 24px 48px;
+            text-align: center;
+            border-radius: 0 0 32px 32px;
+        }
+        .hero h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 12px; }
+        .hero p { font-size: 18px; opacity: 0.9; max-width: 480px; margin: 0 auto 8px; }
+        .hero .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.25);
+            padding: 6px 14px;
+            border-radius: 100px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 20px;
+        }
+        .hero .cta-group { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+        .hero .cta-button {
+            display: inline-block;
+            background: white;
+            color: #2563EB;
+            padding: 16px 40px;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 700;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .hero .cta-button:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.2); }
+        .hero .demo-link { color: rgba(255,255,255,0.8); font-size: 14px; text-decoration: underline; }
+        .hero .demo-link:hover { color: white; }
+
+        /* SB 912 Alert */
+        .alert-box {
+            background: #FEF3C7;
+            border: 1px solid #FCD34D;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 24px auto;
+            max-width: 552px;
+            font-size: 14px;
+            color: #92400E;
+        }
+        .alert-box strong { font-weight: 700; }
+
+        /* Problem section */
+        .section { padding: 48px 24px; }
+        .section h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; text-align: center; }
+        .problem-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .problem-card .icon { font-size: 28px; margin-bottom: 8px; }
+        .problem-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+        .problem-card p { font-size: 15px; color: #71717A; }
+        .problem-card .quote {
+            font-size: 14px; color: #71717A; font-style: italic;
+            margin-top: 12px; padding-top: 12px; border-top: 1px solid #E4E4E7;
+        }
+
+        /* Solution */
+        .solution { background: white; }
+        .feature-list { list-style: none; padding: 0; }
+        .feature-list li {
+            display: flex; align-items: flex-start; gap: 12px;
+            padding: 14px 0; border-bottom: 1px solid #F4F4F5;
+        }
+        .feature-list li:last-child { border-bottom: none; }
+        .feature-list .check { color: #10B981; font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+        .feature-list .text { font-size: 15px; }
+        .feature-list .text strong { font-weight: 600; }
+
+        /* Pricing */
+        .pricing { background: #FAFAFA; text-align: center; }
+        .price-card {
+            background: white; border-radius: 16px; padding: 28px 24px;
+            margin: 0 auto; max-width: 400px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            border: 2px solid #7C3AED;
+        }
+        .price-card .plan-name {
+            font-size: 14px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 1px; color: #7C3AED; margin-bottom: 8px;
+        }
+        .price-card .price { font-size: 42px; font-weight: 700; }
+        .price-card .price-period { font-size: 16px; color: #71717A; font-weight: 400; }
+        .price-card .price-note { font-size: 13px; color: #10B981; font-weight: 500; margin: 8px 0 20px; }
+        .price-card .features { text-align: left; margin-bottom: 24px; }
+        .price-card .features li {
+            font-size: 14px; color: #71717A; padding: 6px 0;
+            list-style: none; display: flex; align-items: flex-start; gap: 8px;
+        }
+        .price-card .features li::before { content: "✓"; color: #10B981; font-weight: 700; flex-shrink: 0; }
+
+        /* Signup form */
+        .signup-form {
+            background: white; border-radius: 16px; padding: 32px;
+            max-width: 440px; margin: 0 auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .signup-form h3 { font-size: 20px; font-weight: 600; margin-bottom: 8px; text-align: center; }
+        .signup-form p { font-size: 14px; color: #71717A; text-align: center; margin-bottom: 24px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; color: #71717A; margin-bottom: 6px; }
+        .form-group input, .form-group select {
+            width: 100%; height: 48px; padding: 0 14px;
+            border: 2px solid #E4E4E7; border-radius: 12px;
+            font-size: 15px; font-family: inherit; color: #18181B;
+            background: white; transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #2563EB; }
+        .submit-btn {
+            width: 100%; height: 52px; background: #2563EB; color: white;
+            border: none; border-radius: 12px; font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .submit-btn:hover { background: #1D4ED8; }
+        .submit-btn:disabled { background: #A1A1AA; cursor: not-allowed; }
+        .success-msg {
+            display: none; background: #10B981; color: white;
+            padding: 16px; border-radius: 12px; text-align: center;
+            font-size: 15px; font-weight: 500;
+        }
+        .success-msg.show { display: block; }
+
+        /* Footer */
+        .footer {
+            padding: 32px 24px; text-align: center;
+            font-size: 13px; color: #A1A1AA; border-top: 1px solid #E4E4E7;
+        }
+        .footer a { color: #71717A; text-decoration: none; }
+        .footer a:hover { color: #2563EB; }
+    </style>
+</head>
+<body>
+
+    <!-- Hero -->
+    <div class="hero">
+        <div class="badge">🏥 Built by an RRT, for RTs</div>
+        <h1>Breathe</h1>
+        <p>The CEU tracker that doesn't charge you to do the work yourself.</p>
+        <p style="font-size: 15px; opacity: 0.8;">Free for individual RTs. Pro is $20/year — cheaper than CE Broker.</p>
+        <div class="cta-group">
+            <a href="https://breathe.brandbooststudio.co/register" class="cta-button">Get Started Free</a>
+            <a href="https://breathe.brandbooststudio.co" class="demo-link">Try the live demo →</a>
+        </div>
+    </div>
+
+    <!-- SB 912 Alert -->
+    <div class="alert-box">
+        <strong>⚠️ Texas RTs: CE Broker becomes mandatory September 1, 2026.</strong><br>
+        Senate Bill 912 requires all TMB licensees to digitally verify CE compliance before renewal. No verification = no renewal. Breathe makes it painless.
+    </div>
+
+    <!-- Problem Section -->
+    <div class="section">
+        <div class="container">
+            <h2>CE Broker charges you to do their job</h2>
+
+            <div class="problem-card">
+                <div class="icon">💸</div>
+                <h3>You pay to manually enter your own data</h3>
+                <p>CE Broker's paid tier costs $29-99/year just to track CEUs you're already required to track. The free tier barely works.</p>
+                <div class="quote">"I DO NOT think the licensure board should mandate that we join CE Broker, a CEU tracking system, that charges a yearly fee." — MoveOn petition, signed by thousands of Florida RTs</div>
+            </div>
+
+            <div class="problem-card">
+                <div class="icon">📱</div>
+                <h3>No mobile app. Web form from 2008.</h3>
+                <p>CE Broker's mobile experience is a browser wrapper. You can't snap a photo of a certificate. You manually type everything.</p>
+            </div>
+
+            <div class="problem-card">
+                <div class="icon">😤</div>
+                <h3>It's not built for RTs</h3>
+                <p>CE Broker serves 50+ professions. It doesn't track NBRC credentials, doesn't generate TMB-specific reports, and doesn't understand respiratory care competencies.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Solution Section -->
+    <div class="section solution">
+        <div class="container">
+            <h2>Breathe does the work for you</h2>
+            <ul class="feature-list">
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Snap a photo → we extract everything.</strong> Certificate OCR auto-fills course title, provider, credits, and date. Type nothing.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>TMB report in one tap.</strong> Generate your Texas Medical Board submission packet as a PDF. Formatted, categorized, with attestation.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Email forwarding.</strong> Forward any CE confirmation email — we parse it automatically.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>NBRC credential tracking.</strong> RRT, CRT, NPS — 5-year CMP cycle tracked alongside your state CEUs.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Multi-state support.</strong> Travel RT? Track multiple state licenses independently.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Competency tracking.</strong> Annual skills checkoffs, unit-specific competencies — all in the same app.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Free CEU course alerts.</strong> We scan AARC and NBRC for free CE opportunities and notify you. Never miss free credits.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>CE Broker auto-sync (coming soon).</strong> Breathe tracks your CEUs, then auto-uploads them to CE Broker. You never have to manually enter anything again.</span>
+                </li>
+                <li>
+                    <span class="check">✓</span>
+                    <span class="text"><strong>Built by an RRT.</strong> Ron Sublett, RRT-NPS, works in the NICU at Driscoll Children's Hospital. He knows the workflow because he lives it.</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Pricing -->
+    <div class="section pricing">
+        <div class="container">
+            <h2>Simple pricing. Free forever.</h2>
+            <div class="price-card">
+                <div class="plan-name">Free for Individual RTs</div>
+                <div class="price">$0<span class="price-period"> /forever</span></div>
+                <div class="price-note">Pro is $20/year intro — cheaper than CE Broker</div>
+                <ul class="features">
+                    <li>Manual CEU entry</li>
+                    <li>Certificate photo upload</li>
+                    <li>Progress tracking</li>
+                    <li>TMB report generation</li>
+                    <li>Email renewal reminders</li>
+                    <li>NBRC credential tracking</li>
+                    <li>Free CEU course alerts</li>
+                    <li>License lookup (TMB auto-fill)</li>
+                    <li>Competency tracking</li>
+                </ul>
+                <p style="font-size: 13px; color: #71717A;">
+                    Pro ($20/yr intro, renews at $39): OCR, email forwarding, AARC auto-import, CE Broker auto-sync, SMS reminders<br><br>
+                    Department ($99/mo flat, up to 25 RTs): Team management, manager dashboard, competency tracking
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signup Form -->
+    <div class="section" id="signup" style="background: linear-gradient(135deg, #2563EB10 0%, #7C3AED10 100%);">
+        <div class="container">
+            <h2>Get early access</h2>
+            <div class="signup-form">
+                <h3>Join the waitlist</h3>
+                <p>We're launching for Texas RTs first. Be the first to know.</p>
+
+                <div class="success-msg" id="success">
+                    ✓ You're on the list! We'll email you when Breathe is ready.
+                </div>
+
+                <form id="signup-form" onsubmit="return handleSubmit(event)">
+                    <div class="form-group">
+                        <label for="name">Full Name</label>
+                        <input type="text" id="name" name="name" required placeholder="Jane Doe, RRT">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" required placeholder="jane@hospital.org">
+                    </div>
+                    <div class="form-group">
+                        <label for="state">Primary License State</label>
+                        <select id="state" name="state" required>
+                            <option value="">Select your state</option>
+                            <option value="TX" selected>Texas</option>
+                            <option value="IN">Indiana</option>
+                            <option value="FL">Florida</option>
+                            <option value="CA">California</option>
+                            <option value="NY">New York</option>
+                            <option value="OH">Ohio</option>
+                            <option value="other">Other (we're adding states fast)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="license_type">License Type</label>
+                        <select id="license_type" name="license_type" required>
+                            <option value="RRT" selected>RRT</option>
+                            <option value="CRT">CRT</option>
+                            <option value="NPS">NPS</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="submit-btn" id="submit-btn">Join Waitlist</button>
+                </form>
+                <p style="font-size: 12px; color: #A1A1AA; text-align: center; margin-top: 12px;">
+                    No spam. We'll only email you about Breathe. Unsubscribe anytime.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="container">
+            <p><strong>Breathe</strong> — Your career, organized.</p>
+            <p style="margin-top: 8px;">Built by <a href="https://sublettlabs.com">Sublett Labs</a> · A product by Ron Sublett, RRT-NPS</p>
+            <p style="margin-top: 8px;">© 2026 Sublett Labs. Not affiliated with TMB, CE Broker, or AARC.</p>
+        </div>
+    </div>
+
+    <script>
+        async function handleSubmit(event) {
+            event.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = 'Joining...';
+
+            const data = {
+                name: document.getElementById('name').value,
+                email: document.getElementById('email').value,
+                state: document.getElementById('state').value,
+                license_type: document.getElementById('license_type').value,
+            };
+
+            try {
+                const res = await fetch('https://breathe.brandbooststudio.co/api/waitlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                });
+
+                if (res.ok || res.status === 409) {
+                    document.getElementById('signup-form').style.display = 'none';
+                    document.getElementById('success').classList.add('show');
+                } else {
+                    throw new Error('Server error');
+                }
+            } catch (err) {
+                document.getElementById('signup-form').style.display = 'none';
+                document.getElementById('success').classList.add('show');
+            }
+
+            return false;
+        }
+    </script>
+</body>
+</html>

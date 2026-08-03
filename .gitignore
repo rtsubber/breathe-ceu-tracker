@@ -1,0 +1,72 @@
+# Environment variables and secrets
+.env
+.env.*
+*.key
+*.pem
+*.token
+cert.pem
+
+# API key files
+.anthropic_key
+.cloudflare_key*
+.fal_key
+.fb_*_token
+.gog_refresh_token
+.google_client_secret.json
+.google-service-account.json
+.newsapi_key
+.porkbun*
+.rapid_api_key
+.shopify_token
+.twitter_keys
+.agentmail*.json
+
+# Secrets directory
+secrets/
+
+# Database files (may contain user data)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Certificate uploads (user data)
+/tmp/breathe/
+
+# Node.js
+node_modules/
+.next/
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/
+
+# Browser profiles
+.browser-profile/
+.browser-profile-*/
+
+# Cloudflare config (contains tunnel credentials)
+.cloudflared/
+
+# TypeScript build info
+*.tsbuildinfo

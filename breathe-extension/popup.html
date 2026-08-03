@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Breathe — CEU Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f8f9fb;
+      color: #111827;
+    }
+    /* Header */
+    .popup-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px;
+      background: linear-gradient(135deg, #2563EB 0%, #1d4ed8 100%);
+      color: #ffffff;
+    }
+    .popup-logo svg { color: #ffffff; flex-shrink: 0; }
+    .popup-header-text h1 {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .popup-header-text p {
+      font-size: 11px;
+      opacity: 0.85;
+      margin-top: 1px;
+    }
+
+    /* Status section */
+    .popup-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #f0f1f3;
+    }
+    .popup-section:last-child { border-bottom: none; }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .connected-as {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #374151;
+    }
+    .connected-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      flex-shrink: 0;
+    }
+    .connected-dot.disconnected { background: #ef4444; }
+
+    /* Progress */
+    .progress-container {
+      margin-top: 10px;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2563EB, #7C3AED);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+    .progress-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 6px;
+    }
+    .progress-text strong {
+      color: #111827;
+      font-weight: 600;
+    }
+    .progress-loading {
+      font-size: 12px;
+      color: #9ca3af;
+      text-align: center;
+      padding: 12px 0;
+    }
+    .progress-error {
+      font-size: 12px;
+      color: #dc2626;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    /* Settings */
+    .settings-field {
+      margin-bottom: 10px;
+    }
+    .settings-field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .settings-field input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1.5px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #111827;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    .settings-field input:focus {
+      border-color: #2563EB;
+    }
+
+    .save-btn {
+      width: 100%;
+      padding: 9px;
+      background: #2563EB;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      font-family: inherit;
+      margin-top: 4px;
+    }
+    .save-btn:hover { background: #1d4ed8; }
+    .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .saved-note {
+      font-size: 12px;
+      color: #059669;
+      text-align: center;
+      margin-top: 6px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .saved-note.show { opacity: 1; }
+
+    /* Action button */
+    .action-detect {
+      display: block;
+      width: 100%;
+      padding: 11px;
+      background: #7C3AED;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      font-family: inherit;
+    }
+    .action-detect:hover { background: #6d28d9; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="popup-header">
+    <div class="popup-logo">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.081 16c-1.959-.48-3.081-2.968-3.081-5.5 0-2.485 1-4.5 3-4.5s3 2.015 3 4.5c0 2.532-1.122 5.02-3.081 5.5z"/>
+        <path d="M17.919 16c1.959-.48 3.081-2.968 3.081-5.5 0-2.485-1-4.5-3-4.5s-3 2.015-3 4.5c0 2.532 1.122 5.02 3.081 5.5z"/>
+        <path d="M12 6v12"/>
+        <path d="M9 18h6"/>
+      </svg>
+    </div>
+    <div class="popup-header-text">
+      <h1>Breathe</h1>
+      <p>CEU Tracker</p>
+    </div>
+  </div>
+
+  <!-- Connection status -->
+  <div class="popup-section">
+    <div class="section-label">Status</div>
+    <div class="connected-as" id="status-row">
+      <span class="connected-dot" id="status-dot"></span>
+      <span id="status-text">Checking connection…</span>
+    </div>
+  </div>
+
+  <!-- CEU Progress -->
+  <div class="popup-section">
+    <div class="section-label">CEU Progress</div>
+    <div id="progress-content">
+      <div class="progress-loading">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Quick action -->
+  <div class="popup-section">
+    <button class="action-detect" id="detect-now">Detect CEU on This Page</button>
+  </div>
+
+  <!-- Settings -->
+  <div class="popup-section">
+    <div class="section-label">Settings</div>
+    <div class="settings-field">
+      <label for="api-url">Breathe API URL</label>
+      <input type="url" id="api-url" placeholder="http://localhost:8088" value="http://localhost:8088">
+    </div>
+    <div class="settings-field">
+      <label for="user-id">User ID</label>
+      <input type="text" id="user-id" placeholder="Your Breathe user ID">
+    </div>
+    <button class="save-btn" id="save-settings">Save Settings</button>
+    <div class="saved-note" id="saved-note">✓ Settings saved</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

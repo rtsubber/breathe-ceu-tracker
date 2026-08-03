@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+weasyprint
+easyocr
+pillow
+python-multipart
+pytesseract
+requests
+beautifulsoup4
