@@ -151,7 +151,7 @@ Proprietary. © 2026 Sublett Labs. All rights reserved.
 ## Links
 
 - **Landing page:** [breathe.sublettlabs.com](https://breathe.sublettlabs.com)
-- **App:** [breathe.brandbooststudio.co](https://breathe.brandbooststudio.co)
+- **App:** [app.breathe.sublettlabs.com](https://app.breathe.sublettlabs.com) (propagating — use [breathe.brandbooststudio.co](https://breathe.brandbooststudio.co) temporarily)
 - **Company:** [sublettlabs.com](https://sublettlabs.com)
 
 ---
