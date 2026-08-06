@@ -342,9 +342,9 @@ export default function CompetenciesPage() {
 
       {/* Generate Report Button */}
       <div className="px-4 mb-4">
-        <Link href="/tmb-report">
+        <Link href="/ce-report">
           <Button variant="outline" size="lg" className="w-full">
-            <FileText size={20} className="mr-1" /> Generate TMB Report
+            <FileText size={20} className="mr-1" /> Generate CE Compliance Report
           </Button>
         </Link>
       </div>

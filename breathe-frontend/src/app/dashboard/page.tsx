@@ -48,6 +48,8 @@ import {
   type CEBrokerStatus,
 } from "@/lib/api";
 import { NBRCStatusCard } from "@/components/nbrc-status";
+import { LicenseLookup } from "@/components/license-lookup";
+import type { LicenseLookupResult } from "@/lib/api";
 import { usStates } from "@/lib/mock-data";
 
 export default function DashboardPage() {
@@ -63,11 +65,31 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedState, setSelectedState] = useState<string>("");
   const [showAddState, setShowAddState] = useState(false);
+  const [showLicenses, setShowLicenses] = useState(false);
   const [cebrokerStatus, setCebrokerStatus] = useState<CEBrokerStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<CEBrokerSyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [nbrcStatus, setNbrcStatus] = useState<NBRCStatus | null>(null);
+  const [addStateSelection, setAddStateSelection] = useState<string>("");
+
+  // Convert full state name to 2-letter code for API
+  const stateNameToCode: Record<string, string> = {
+    "Texas": "TX", "Indiana": "IN", "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ",
+    "Arkansas": "AR", "California": "CA", "Colorado": "CO", "Connecticut": "CT",
+    "Delaware": "DE", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
+    "Illinois": "IL", "Iowa": "IA", "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA",
+    "Maine": "ME", "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI",
+    "Minnesota": "MN", "Mississippi": "MS", "Missouri": "MO", "Montana": "MT",
+    "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ",
+    "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND",
+    "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
+    "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+    "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+  };
+  const [lookupResult, setLookupResult] = useState<LicenseLookupResult | null>(null);
+  const [savingLicense, setSavingLicense] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,8 +227,11 @@ export default function DashboardPage() {
               {license ? ` · Expires ${formatDate(license.expiry_date).split(",")[0]}` : ""}
             </span>
           </div>
-          {/* NBRC credential badges (show credentials that aren't the license type) */}
-          {nbrcStatus?.credentials?.filter(c => c.type !== license?.license_type).map((cred) => (
+          {/* NBRC credential badges (show credentials that aren't the license type, hide CRT if RRT+) */}
+          {nbrcStatus?.credentials?.filter(c => c.type !== license?.license_type).filter((cred, _i, arr) => {
+            const hasRRTOrHigher = arr.some(c => ["RRT", "RRT-NPS", "ACCS", "SDS", "RPFT", "AE-C"].includes(c.type));
+            return !(hasRRTOrHigher && cred.type === "CRT");
+          }).map((cred) => (
             <span key={cred.type} className="text-xs bg-accent/30 text-white px-2 py-1 rounded-full font-medium border border-white/20">
               {cred.type}
             </span>
@@ -245,61 +270,169 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Inline add-state form */}
+        {/* All licenses list with status — collapsible */}
+        {licenses.length > 0 && (
+          <div className="mt-2">
+            <button
+              onClick={() => setShowLicenses(!showLicenses)}
+              className="text-xs text-white/60 hover:text-white/90 transition-colors flex items-center gap-1"
+            >
+              <ChevronRight size={12} className={`transition-transform ${showLicenses ? "rotate-90" : ""}`} />
+              {showLicenses ? "Hide" : "Show"} all licenses ({licenses.length})
+            </button>
+            {showLicenses && (
+              <div className="mt-2 space-y-2">
+            {licenses.map((lic) => {
+              const expiry = new Date(lic.expiry_date);
+              const now = new Date();
+              const isExpired = expiry < now;
+              const isPrimary = lic === licenses[0];
+              return (
+                <div
+                  key={lic.id}
+                  className={`flex items-center justify-between gap-3 p-3 rounded-card border ${
+                    isExpired
+                      ? "bg-white/5 border-white/10"
+                      : "bg-white/10 border-white/20"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Award size={16} className="flex-shrink-0 text-white/70" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white truncate">
+                        {lic.state} — {lic.license_number}
+                        {isPrimary && <span className="text-xs text-white/60 ml-1">(Primary)</span>}
+                      </p>
+                      <p className="text-xs text-white/60">
+                        {lic.license_type} · Expires {formatDate(lic.expiry_date).split(",")[0]}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`flex-shrink-0 text-xs px-2 py-1 rounded-full font-medium ${
+                      isExpired
+                        ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                        : "bg-green-500/20 text-green-300 border border-green-500/30"
+                    }`}
+                  >
+                    {isExpired ? "Expired" : "Active"}
+                  </span>
+                </div>
+              );
+            })}
+            </div>
+            )}
+          </div>
+        )}
+
+        {/* Add state license via LicenseLookup */}
         {showAddState && (
-          <div className="mt-3 bg-white/10 rounded-card p-3 space-y-2">
-            <div className="grid grid-cols-3 gap-2">
-              <select
-                id="add-state"
-                className="h-10 px-2 rounded-button text-text-primary text-sm bg-white"
-                defaultValue=""
+          <div className="mt-3 bg-white rounded-card p-4 space-y-3 text-text-primary">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Add State License</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddState(false);
+                  setAddStateSelection("");
+                  setLookupResult(null);
+                }}
+                className="text-xs text-text-secondary hover:text-text-primary"
               >
-                <option value="" disabled>Select state</option>
+                ✕
+              </button>
+            </div>
+
+            {/* Step 1: Select state */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-secondary">
+                Select state
+              </label>
+              <select
+                value={addStateSelection}
+                onChange={(e) => {
+                  setAddStateSelection(e.target.value);
+                  setLookupResult(null);
+                }}
+                className="w-full h-11 px-4 rounded-button border-2 border-gray-200 focus:border-primary focus:outline-none text-text-primary bg-white text-sm"
+              >
+                <option value="" disabled>Select a state</option>
                 {usStates
                   .filter((s) => !licenses.some((l) => l.state === s))
                   .map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
               </select>
-              <select
-                id="add-license-type"
-                className="h-10 px-2 rounded-button text-text-primary text-sm bg-white"
-                defaultValue="RRT"
-              >
-                <option value="RRT">RRT</option>
-                <option value="CRT">CRT</option>
-                <option value="NPS">NPS</option>
-              </select>
-              <input
-                type="date"
-                id="add-expiry"
-                className="h-10 px-2 rounded-button text-text-primary text-sm bg-white"
-              />
             </div>
-            <p className="text-xs text-white/60">
-              Select your state and license details to add a secondary license.
-            </p>
-            <button
-              onClick={async () => {
-                const stateEl = document.getElementById("add-state") as HTMLSelectElement;
-                const typeEl = document.getElementById("add-license-type") as HTMLSelectElement;
-                const expiryEl = document.getElementById("add-expiry") as HTMLInputElement;
-                if (!stateEl?.value || !expiryEl?.value) return;
-                const stateNameToCode: Record<string, string> = { "Texas": "TX", "Indiana": "IN", "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Iowa": "IA", "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY" };
-                try {
-                  const token = localStorage.getItem("breathe_token");
-                  const res = await fetch("/api/licenses", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                    body: JSON.stringify({ state: stateNameToCode[stateEl.value] || stateEl.value, license_type: typeEl?.value || "RRT", license_number: "PENDING", expiry_date: expiryEl.value, cycle_years: 2, required_ceus: 24 }),
-                  });
-                  if (res.ok) { setShowAddState(false); window.location.reload(); }
-                } catch (e) { console.error(e); }
-              }}
-              className="w-full mt-2 bg-white/20 hover:bg-white/30 text-white text-sm font-medium py-2 rounded-button transition-colors"
-            >
-              Save License
-            </button>
+
+            {/* Step 2: LicenseLookup once state is selected */}
+            {addStateSelection && (
+              <div className="pt-2 border-t border-gray-100">
+                <LicenseLookup
+                  state={stateNameToCode[addStateSelection] || addStateSelection}
+                  onSelect={(result: LicenseLookupResult) => {
+                    setLookupResult(result);
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Step 3: Save button once a license is selected */}
+            {lookupResult && (
+              <div className="pt-2 border-t border-gray-100 space-y-2">
+                <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-button text-sm text-green-700">
+                  <CheckCircle2 size={16} className="mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-medium">License found!</p>
+                    <p className="text-xs text-green-600 mt-0.5">
+                      {lookupResult.name} — {lookupResult.license_number}
+                      {lookupResult.license_type_full ? ` (${lookupResult.license_type_full})` : ` (${lookupResult.license_type})`}
+                      {lookupResult.expiry_date && ` · Expires ${new Date(lookupResult.expiry_date).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={savingLicense}
+                  onClick={async () => {
+                    if (!lookupResult.expiry_date) return;
+                    setSavingLicense(true);
+                    try {
+                      const token = localStorage.getItem("breathe_token");
+                      // Map lookup license_type to a display type for our system
+                      const displayType = lookupResult.license_type === "RCP"
+                        ? "RRT"
+                        : lookupResult.license_type;
+                      const res = await fetch("/api/licenses", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                        body: JSON.stringify({
+                          state: addStateSelection,
+                          license_type: displayType,
+                          license_number: lookupResult.license_number,
+                          expiry_date: lookupResult.expiry_date,
+                          cycle_years: 2,
+                          required_ceus: 24,
+                        }),
+                      });
+                      if (res.ok) {
+                        setShowAddState(false);
+                        setAddStateSelection("");
+                        setLookupResult(null);
+                        window.location.reload();
+                      }
+                    } catch (e) {
+                      console.error(e);
+                    } finally {
+                      setSavingLicense(false);
+                    }
+                  }}
+                  className="w-full bg-primary hover:bg-primary/90 text-white text-sm font-medium py-2.5 rounded-button transition-colors disabled:opacity-50"
+                >
+                  {savingLicense ? "Saving…" : "Save License"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -336,12 +469,12 @@ export default function DashboardPage() {
               <span className="text-xs font-medium text-text-primary">Add CEU</span>
             </Card>
           </Link>
-          <Link href="/tmb-report">
+          <Link href="/ce-report">
             <Card className="flex flex-col items-center gap-2 py-3 hover:shadow-md transition-shadow cursor-pointer">
               <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
                 <FileText size={20} className="text-accent" />
               </div>
-              <span className="text-xs font-medium text-text-primary text-center">TMB Report</span>
+              <span className="text-xs font-medium text-text-primary text-center">CE Compliance Report</span>
             </Card>
           </Link>
           <Link href="/ceus">

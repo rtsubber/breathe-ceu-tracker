@@ -25,6 +25,7 @@ class User(Base):
     subscription_status = Column(String(20), default="active")  # active/canceled/past_due
     stripe_customer_id = Column(String(255), nullable=True)
     subscription_expires = Column(DateTime, nullable=True)
+    onboarding_completed = Column(Boolean, default=False)  # False until user completes onboarding
 
     licenses = relationship("License", back_populates="user", cascade="all, delete-orphan")
     ceus = relationship("CEU", back_populates="user", cascade="all, delete-orphan")
@@ -137,6 +138,7 @@ class StateRequirement(Base):
     required_ceus = Column(Integer, nullable=False)
     cycle_years = Column(Integer, default=2)
     mandatory_topics = Column(JSON, nullable=True)
+    board_name = Column(String(255), nullable=True)
 
 
 class UserEmailAlias(Base):

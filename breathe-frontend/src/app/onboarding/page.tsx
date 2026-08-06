@@ -8,7 +8,7 @@ import { LicenseLookup } from "@/components/license-lookup";
 import type { LicenseLookupResult } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
-import { ChevronRight, ChevronLeft, Calendar, Award, Search, CheckCircle2, BadgeCheck } from "lucide-react";
+import { ChevronRight, ChevronLeft, Calendar, Award, Search, CheckCircle2, BadgeCheck, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 // If we have a license expiry date, estimate NBRC cycle end.
@@ -38,12 +38,57 @@ export default function OnboardingPage() {
   const [nbrcCycleEnd, setNbrcCycleEnd] = useState(""); // Calculated from license expiry
   const [nbrcRenewalMethod, setNbrcRenewalMethod] = useState("assessments");
 
+  // NBRC portal login state
+  const [nbrcEmail, setNbrcEmail] = useState("");
+  const [nbrcPassword, setNbrcPassword] = useState("");
+  const [showNbrcPassword, setShowNbrcPassword] = useState(false);
+  const [nbrcScraping, setNbrcScraping] = useState(false);
+  const [nbrcScrapeError, setNbrcScrapeError] = useState<string | null>(null);
+  const [nbrcScrapeSuccess, setNbrcScrapeSuccess] = useState(false);
+
   // When expiryDate changes (from TMB lookup or manual entry), estimate NBRC cycle end
   useEffect(() => {
     if (expiryDate) {
       setNbrcCycleEnd(calculateNBRCCycleEnd(expiryDate));
     }
   }, [expiryDate]);
+
+  // Pre-fill NBRC email with the user's account email
+  useEffect(() => {
+    if (user?.email) setNbrcEmail(user.email);
+  }, [user?.email]);
+
+  const handleNbrcScrape = async () => {
+    setNbrcScrapeError(null);
+    setNbrcScrapeSuccess(false);
+    setNbrcScraping(true);
+    try {
+      const result = await apiFetch<any>("/api/nbrc/scrape", {
+        method: "POST",
+        body: JSON.stringify({ email: nbrcEmail, password: nbrcPassword }),
+      });
+      if (result.success) {
+        setNbrcScrapeSuccess(true);
+        // Auto-fill credential type from scraped data
+        if (result.credentials?.length > 0) {
+          const highest = result.credentials.find((c: any) => c.type === "RRT") || result.credentials[0];
+          setNbrcType(highest.type);
+        }
+        // Auto-fill cycle end from scraped data
+        if (result.credentials?.length > 0) {
+          const expires = result.credentials[0].expires; // MM/DD/YYYY
+          const parts = expires.split("/");
+          if (parts.length === 3) {
+            setNbrcCycleEnd(`${parts[2]}-${parts[0]}-${parts[1]}`);
+          }
+        }
+      }
+    } catch (err) {
+      setNbrcScrapeError(err instanceof Error ? err.message : "Failed to pull NBRC data");
+    } finally {
+      setNbrcScraping(false);
+    }
+  };
 
   // Convert full state name to 2-letter code for API
   const stateNameToCode: Record<string, string> = {
@@ -111,6 +156,13 @@ export default function OnboardingPage() {
             is_highest: nbrcType === "RRT", // RRT is typically the highest
           }),
         });
+      }
+
+      // Mark onboarding as complete
+      try {
+        await apiFetch("/api/user/onboarding-complete", { method: "POST" });
+      } catch (e) {
+        console.error("Failed to mark onboarding complete:", e);
       }
 
       router.push("/dashboard");
@@ -315,11 +367,95 @@ export default function OnboardingPage() {
               <p className="text-text-secondary">{steps[1].subtitle}</p>
             </div>
 
-            {/* NBRC Credential Setup card */}
-            <div className="bg-surface rounded-card p-5 border border-gray-100 space-y-4">
-              <h3 className="text-sm font-semibold text-text-primary">NBRC Credential Setup</h3>
+            {/* NBRC Portal Login — Pro Feature */}
+            <div className="bg-gradient-to-br from-primary/5 to-accent/5 rounded-card p-5 border border-primary/20 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <BadgeCheck size={20} className="text-primary" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-text-primary">Auto-sync from NBRC Portal</h3>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Enter your NBRC login and we&apos;ll pull your real credentials, CMP cycle dates, assessment scores, and CE requirements automatically.
+                  </p>
+                  <div className="flex items-center gap-1 mt-2">
+                    <span className="text-xs font-medium text-accent bg-accent/10 px-2 py-0.5 rounded-full">Pro Feature</span>
+                    <span className="text-xs text-text-secondary">· Free during launch</span>
+                  </div>
+                </div>
+              </div>
 
-              {/* NBRC Credential Type */}
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-secondary">NBRC Portal Email</label>
+                  <input
+                    type="email"
+                    value={nbrcEmail}
+                    onChange={(e) => setNbrcEmail(e.target.value)}
+                    placeholder="ron@example.com"
+                    className="w-full h-11 px-3 rounded-button border-2 border-gray-200 focus:border-primary focus:outline-none text-text-primary text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-secondary">NBRC Portal Password</label>
+                  <div className="relative">
+                    <input
+                      type={showNbrcPassword ? "text" : "password"}
+                      value={nbrcPassword}
+                      onChange={(e) => setNbrcPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full h-11 px-3 pr-10 rounded-button border-2 border-gray-200 focus:border-primary focus:outline-none text-text-primary text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNbrcPassword(!showNbrcPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
+                      tabIndex={-1}
+                    >
+                      {showNbrcPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={handleNbrcScrape}
+                  disabled={!nbrcEmail || !nbrcPassword || nbrcScraping}
+                >
+                  {nbrcScraping ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" /> Pulling from NBRC...
+                    </>
+                  ) : (
+                    "Pull My NBRC Data"
+                  )}
+                </Button>
+                {nbrcScrapeError && (
+                  <div className="flex items-center gap-2 bg-danger/10 text-danger rounded-button px-3 py-2 text-xs">
+                    <AlertTriangle size={14} />
+                    <span>{nbrcScrapeError}</span>
+                  </div>
+                )}
+                {nbrcScrapeSuccess && (
+                  <div className="flex items-center gap-2 bg-success/10 text-success rounded-button px-3 py-2 text-xs">
+                    <CheckCircle2 size={14} />
+                    <span>NBRC data synced! Credentials, CMP cycle, and assessment scores pulled.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Skip / Manual entry divider */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-gray-200" />
+              <span className="text-xs text-text-secondary">or enter manually</span>
+              <div className="flex-1 h-px bg-gray-200" />
+            </div>
+
+            {/* Manual NBRC Credential Setup card */}
+            <div className="bg-surface rounded-card p-4 border border-gray-100 space-y-3">
+              <h3 className="text-sm font-semibold text-text-primary">Manual Entry</h3>
+
               <div className="space-y-2">
                 <label className="text-sm font-medium text-text-secondary">Credential Type</label>
                 <select
@@ -336,28 +472,8 @@ export default function OnboardingPage() {
                 </select>
               </div>
 
-              {/* NBRC Registry Number */}
               <div className="space-y-2">
-                <label className="text-sm font-medium text-text-secondary">
-                  NBRC Registry Number
-                </label>
-                <input
-                  type="text"
-                  value={nbrcRegistryNumber}
-                  onChange={(e) => setNbrcRegistryNumber(e.target.value)}
-                  placeholder="Enter your NBRC registry number"
-                  className="w-full h-12 px-4 rounded-button border-2 border-gray-200 focus:border-primary focus:outline-none text-text-primary font-mono text-sm"
-                />
-                <p className="text-xs text-text-secondary">
-                  This is separate from your state license number.
-                </p>
-              </div>
-
-              {/* CMP Cycle End Date */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-secondary">
-                  CMP Cycle End Date {nbrcCycleEnd && <span className="text-accent text-xs">(estimated)</span>}
-                </label>
+                <label className="text-sm font-medium text-text-secondary">CMP Cycle End Date {nbrcCycleEnd && <span className="text-accent text-xs">(estimated)</span>}</label>
                 <div className="relative">
                   <Calendar size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
                   <input
@@ -368,25 +484,6 @@ export default function OnboardingPage() {
                   />
                 </div>
               </div>
-
-              {/* Renewal Method */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-secondary">Renewal Method</label>
-                <select
-                  value={nbrcRenewalMethod}
-                  onChange={(e) => setNbrcRenewalMethod(e.target.value)}
-                  className="w-full h-12 px-4 rounded-button border-2 border-gray-200 focus:border-primary focus:outline-none text-text-primary bg-white"
-                >
-                  <option value="assessments">Quarterly Assessments</option>
-                  <option value="exam">Retake Exam</option>
-                  <option value="new_credential">New Credential</option>
-                </select>
-              </div>
-
-              {/* Note */}
-              <p className="text-xs text-text-secondary">
-                We estimated your CMP cycle end date from your license. Please verify this is correct — your actual NBRC cycle may differ.
-              </p>
             </div>
 
             {error && (
@@ -403,7 +500,7 @@ export default function OnboardingPage() {
                 size="lg"
                 className="flex-1"
                 onClick={() => setStep(2)}
-                disabled={!nbrcType || !nbrcCycleEnd}
+                disabled={!nbrcType && !nbrcScrapeSuccess}
               >
                 Save &amp; Continue <ChevronRight size={20} className="ml-1" />
               </Button>

@@ -199,7 +199,7 @@ export default function ProfilePage() {
           <p className="text-xs text-text-secondary mt-3 pt-3 border-t border-gray-100">
             RTs in Texas are licensed through{" "}
             <strong className="text-text-primary">
-              TMB — Texas Medical Board
+              your state licensing board
             </strong>
             .
           </p>

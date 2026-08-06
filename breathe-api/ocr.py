@@ -81,6 +81,45 @@ def extract_text_from_image(image_path: str) -> list:
     return extracted
 
 
+def extract_text_from_pdf(pdf_path: str) -> list:
+    """Extract text from PDF using PyMuPDF. Returns list of (text, confidence) tuples.
+
+    Confidence is set to 0.95 for PDF text (digital text, not OCR)."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        logger.error("PyMuPDF (fitz) not installed — cannot extract PDF text")
+        return []
+
+    extracted = []
+    try:
+        doc = fitz.open(pdf_path)
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text()
+            for line in text.split("\n"):
+                line = line.strip()
+                if line:
+                    extracted.append((line, 0.95))
+        doc.close()
+    except Exception as e:
+        logger.error("PDF text extraction failed: %s", e)
+        return []
+    return extracted
+
+
+def is_pdf(file_path: str) -> bool:
+    """Check if a file is a PDF based on extension or magic bytes."""
+    if file_path.lower().endswith(".pdf"):
+        return True
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(5)
+        return header == b"%PDF-"
+    except Exception:
+        return False
+
+
 # ─── Claude API semantic parser ────────────────────────────────
 
 def _raw_text_from_extracted(extracted: list) -> str:
@@ -411,11 +450,15 @@ def parse_ceu_data(extracted: list) -> dict:
 
 
 def process_certificate(image_path: str) -> dict:
-    """Full OCR pipeline: extract text from image and parse CEU data.
+    """Full OCR pipeline: extract text from image or PDF and parse CEU data.
 
-    1. easyocr extracts raw text
-    2. Claude API parses raw text into structured CEU data
-    3. Falls back to regex parser if Claude fails
+    1. For images: easyocr extracts raw text
+    2. For PDFs: PyMuPDF extracts digital text directly
+    3. Claude API parses raw text into structured CEU data
+    4. Falls back to regex parser if Claude fails
     """
-    extracted = extract_text_from_image(image_path)
+    if is_pdf(image_path):
+        extracted = extract_text_from_pdf(image_path)
+    else:
+        extracted = extract_text_from_image(image_path)
     return parse_ceu_data(extracted)

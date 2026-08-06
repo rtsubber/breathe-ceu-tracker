@@ -16,6 +16,7 @@ type User = {
   email: string;
   subscription_tier: string;
   subscription_status: string;
+  onboarding_completed: boolean;
 };
 
 type AuthContextType = {

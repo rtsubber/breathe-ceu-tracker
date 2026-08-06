@@ -69,4 +69,8 @@ build/
 .cloudflared/
 
 # TypeScript build info
-*.tsbuildinfo
+*.tsbuildinfo.env.jwt
+tsconfig.tsbuildinfo
+breathe-frontend/tsconfig.tsbuildinfo
+
+# TypeScript incremental build cache

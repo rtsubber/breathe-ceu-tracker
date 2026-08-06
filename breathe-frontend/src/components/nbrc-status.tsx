@@ -117,7 +117,13 @@ export function NBRCStatusCard() {
               <h3 className="text-sm font-bold text-text-primary">NBRC CMP</h3>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {status.credentials.map((cred, i) => (
+              {status.credentials
+                .filter((cred, _i, arr) => {
+                  // Don't show CRT if user has RRT or higher
+                  const hasRRTOrHigher = arr.some(c => ["RRT", "RRT-NPS", "ACCS", "SDS", "RPFT", "AE-C"].includes(c.type));
+                  return !(hasRRTOrHigher && cred.type === "CRT");
+                })
+                .map((cred, i) => (
                 <span
                   key={i}
                   className={`text-xs font-semibold px-2 py-1 rounded-full ${

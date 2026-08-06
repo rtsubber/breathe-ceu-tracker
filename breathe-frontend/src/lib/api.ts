@@ -115,6 +115,7 @@ export type StateRequirement = {
   required_ceus: number;
   cycle_years: number;
   mandatory_topics: string[] | null;
+  board_name?: string | null;
 };
 
 export type OCRResult = {
@@ -283,6 +284,13 @@ export async function uploadCertificateOCR(file: File): Promise<OCRResult> {
 export async function getPrimaryLicense(): Promise<License | null> {
   const licenses = await getLicenses();
   return licenses[0] ?? null;
+}
+
+/** Returns the board name for a given state code (e.g., "TX" → "Texas Medical Board"). */
+export async function getBoardName(stateCode: string): Promise<string> {
+  const states = await getStates();
+  const match = states.find((s) => s.state === stateCode.toUpperCase());
+  return match?.board_name ?? "State Licensing Board";
 }
 
 /** Format an ISO date string as e.g. "Mar 5, 2026". */

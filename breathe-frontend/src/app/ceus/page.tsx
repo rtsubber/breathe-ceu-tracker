@@ -33,6 +33,20 @@ export default function CEUsPage() {
 
   const [deleting, setDeleting] = useState<number | null>(null);
 
+  const viewCertificate = (ceuId: number) => {
+    const token = localStorage.getItem("breathe_token");
+    const url = `/api/ceus/${ceuId}/certificate`;
+    // Open in new tab with auth token as query param (simplest for inline viewing)
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((res) => res.blob())
+      .then((blob) => {
+        const objUrl = URL.createObjectURL(blob);
+        window.open(objUrl, "_blank");
+        setTimeout(() => URL.revokeObjectURL(objUrl), 30000);
+      })
+      .catch(() => setError("Failed to load certificate"));
+  };
+
   const handleDelete = async (id: number) => {
     setDeleting(id);
     try {
@@ -139,9 +153,13 @@ export default function CEUsPage() {
             const displayCat = categoryDisplay[ceu.category] ?? ceu.category;
             return (
               <Card key={ceu.id} className="flex items-center gap-3 py-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center flex-shrink-0">
+                <button
+                  onClick={ceu.certificate_path ? () => viewCertificate(ceu.id) : undefined}
+                  className={`w-10 h-10 rounded-full bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center flex-shrink-0 ${ceu.certificate_path ? "cursor-pointer hover:from-primary/20 hover:to-accent/20" : ""}`}
+                  title={ceu.certificate_path ? "View certificate" : "No certificate attached"}
+                >
                   <FileText size={18} className="text-primary" />
-                </div>
+                </button>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-text-primary truncate">{ceu.title}</p>
                   <p className="text-xs text-text-secondary">
@@ -162,7 +180,7 @@ export default function CEUsPage() {
                   {displayCat}
                 </span>
                 <button
-                  onClick={() => handleDelete(ceu.id)}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(ceu.id); }}
                   disabled={deleting === ceu.id}
                   className="p-2 rounded-lg text-text-secondary hover:bg-danger/10 hover:text-danger transition-colors flex-shrink-0"
                   title="Delete CEU"

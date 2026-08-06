@@ -5,9 +5,18 @@ RT CEU + Competency Tracker API backend for clickable demo prototype.
 import os
 import sys
 import time
+import uuid
+import logging
 from collections import defaultdict, deque
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+logger = logging.getLogger(__name__)
+
+# Brute-force protection: track failed login attempts
+_login_failures = defaultdict(list)  # email -> list of failure timestamps
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCK_MINUTES = 15
 
 from datetime import date, datetime
 from typing import Optional, List
@@ -148,6 +157,7 @@ class UserOut(BaseModel):
     created_at: datetime
     subscription_tier: str = "free"
     subscription_status: str = "active"
+    onboarding_completed: bool = False
 
     class Config:
         from_attributes = True
@@ -248,6 +258,7 @@ class StateRequirementOut(BaseModel):
     required_ceus: int
     cycle_years: int
     mandatory_topics: Optional[list]
+    board_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -395,14 +406,14 @@ def register_user(payload: RegisterRequest, db: SessionLocal = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    if len(payload.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(payload.password) < 8 or not any(c.isalpha() for c in payload.password) or not any(c.isdigit() for c in payload.password):
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include a letter and a number")
 
     user = User(
         name=payload.name.strip(),
         email=email,
         password_hash=hash_password(payload.password),
-        subscription_tier="free",
+        subscription_tier="pro",  # Launch period: all signups get Pro free
         subscription_status="active",
     )
     db.add(user)
@@ -417,12 +428,31 @@ def register_user(payload: RegisterRequest, db: SessionLocal = Depends(get_db)):
 def login_user(payload: LoginRequest, db: SessionLocal = Depends(get_db)):
     """Login with email + password."""
     email = payload.email.lower().strip()
+
+    # Brute-force protection: check if account is locked
+    now = time.time()
+    failures = _login_failures[email]
+    # Prune failures older than the lock window
+    cutoff = now - (LOGIN_LOCK_MINUTES * 60)
+    _login_failures[email] = [t for t in failures if t > cutoff]
+    if len(_login_failures[email]) >= LOGIN_MAX_FAILURES:
+        remaining = int((_login_failures[email][0] + LOGIN_LOCK_MINUTES * 60 - now) / 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Try again in {remaining} minutes.",
+        )
+
     user = db.query(User).filter(User.email == email).first()
     if not user or not user.password_hash:
+        _login_failures[email].append(now)
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not verify_password(payload.password, user.password_hash):
+        _login_failures[email].append(now)
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Successful login — reset failure counter
+    _login_failures.pop(email, None)
 
     token = create_access_token(user.id, user.email)
     return AuthResponse(user=UserOut.model_validate(user), token=token)
@@ -438,6 +468,15 @@ def get_me(current_user: User = Depends(get_current_user)):
 def logout():
     """Logout — client just discards the token."""
     return {"success": True}
+
+
+@app.post("/api/user/onboarding-complete", tags=["User"])
+def complete_onboarding(current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
+    """Mark onboarding as completed for the authenticated user."""
+    current_user.onboarding_completed = True
+    db.commit()
+    db.refresh(current_user)
+    return UserOut.model_validate(current_user)
 
 
 # ─── User Endpoints ─────────────────────────────────────────────
@@ -511,23 +550,86 @@ async def upload_certificate_ocr(
     # OCR is a Pro feature
     require_pro(current_user, "ocr")
 
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPEG, PNG, WebP, GIF, TIFF, PDF")
+
     # Read uploaded file
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    # Validate actual file bytes (magic numbers) — don't trust content-type header
+    import filetype
+    kind = filetype.guess(file_bytes)
+    if kind is None:
+        raise HTTPException(status_code=400, detail="Could not determine file type. Allowed: JPEG, PNG, WebP, GIF, PDF")
+    allowed_mimes = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
+    if kind.mime not in allowed_mimes:
+        raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: JPEG, PNG, WebP, GIF, PDF")
+
+    # Validate file size (10MB max)
+    max_size = 10 * 1024 * 1024
+    if len(file_bytes) > max_size:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB.")
+
+    # Sanitize filename: strip path, generate safe name with uuid
+    original_name = os.path.basename(file.filename or "certificate.png")
+    ext = os.path.splitext(original_name)[1] or ".png"
+    safe_filename = f"{uuid.uuid4().hex}{ext}"
+
     # Save certificate image
     from ocr import save_certificate_image, process_certificate
-    save_path = save_certificate_image(file_bytes, file.filename or "certificate.png", current_user.id)
+    save_path = save_certificate_image(file_bytes, safe_filename, current_user.id)
 
     # Run OCR
     try:
         result = process_certificate(save_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+        logger.exception("OCR processing failed")
+        raise HTTPException(status_code=500, detail="OCR processing failed. Please try again with a clearer image.")
 
     result["certificate_path"] = save_path
     return result
+
+
+# ─── Certificate File Serving ──────────────────────────────────
+
+@app.get("/api/ceus/{ceu_id}/certificate", tags=["CEUs"])
+def get_certificate_file(
+    ceu_id: int,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Serve the certificate file attached to a CEU."""
+    ceu = db.query(CEU).filter(CEU.id == ceu_id, CEU.user_id == current_user.id).first()
+    if not ceu:
+        raise HTTPException(status_code=404, detail="CEU not found")
+    if not ceu.certificate_path:
+        raise HTTPException(status_code=404, detail="No certificate attached to this CEU")
+    if not os.path.exists(ceu.certificate_path):
+        raise HTTPException(status_code=404, detail="Certificate file not found on disk")
+    
+    ext = os.path.splitext(ceu.certificate_path)[1].lower()
+    content_types = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    content_type = content_types.get(ext, "application/octet-stream")
+    
+    with open(ceu.certificate_path, "rb") as f:
+        file_bytes = f.read()
+    
+    return Response(
+        content=file_bytes,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{os.path.basename(ceu.certificate_path)}"'},
+    )
 
 
 # ─── Credential Endpoints ───────────────────────────────────────
@@ -647,17 +749,17 @@ def get_progress(current_user: User = Depends(get_current_user), db: SessionLoca
     )
 
 
-# ─── TMB Report Endpoint ────────────────────────────────────────
+# ─── CE Compliance Report Endpoint ─────────────────────────────
 
-@app.get("/api/tmb-report", tags=["Reports"])
-def generate_tmb_report_endpoint(current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
-    """Generate TMB submission PDF for the authenticated user (returns PDF file download).
+@app.get("/api/ce-report", tags=["Reports"])
+def generate_ce_report_endpoint(current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
+    """Generate CE Compliance Report PDF for the authenticated user.
 
-    TMB = Texas Medical Board.
-    RTs in Texas are licensed through TMB.
+    Dynamically shows the correct state licensing board name based on the
+    user's primary license state. Works for all 50 states + DC.
     """
     user_id = current_user.id
-    from tmb_report import generate_tmb_report as gen_report
+    from ce_report import generate_ce_report as gen_report
     try:
         pdf_bytes = gen_report(db, user_id)
     except ValueError as e:
@@ -665,12 +767,21 @@ def generate_tmb_report_endpoint(current_user: User = Depends(get_current_user),
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
-    filename = f"tmb_ceu_report_user_{user_id}.pdf"
+    filename = f"ce_compliance_report_user_{user_id}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─── Legacy TMB Report Endpoint (redirects to CE Report) ───────
+
+@app.get("/api/tmb-report", tags=["Reports"], include_in_schema=False)
+def tmb_report_legacy_redirect(current_user: User = Depends(get_current_user)):
+    """Backward compatibility: redirect old TMB report endpoint to CE report."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/api/ce-report", status_code=307)
 
 
 # ─── State Requirements Endpoint ────────────────────────────────
@@ -960,8 +1071,8 @@ async def stripe_webhook(request: Request, db: SessionLocal = Depends(get_db)):
         if webhook_secret:
             event = stripe.Webhook.construct_event(body, sig_header, webhook_secret)
         else:
-            import json
-            event = stripe.Event.construct_from(json.loads(body), stripe.api_key)
+            # No webhook secret configured — reject all webhooks
+            raise HTTPException(status_code=503, detail="Stripe webhook secret not configured")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {str(e)}")
 
@@ -1310,7 +1421,8 @@ def lookup_license_endpoint(payload: LicenseLookupRequest):
         )
 
         if result.get("error"):
-            raise HTTPException(status_code=400, detail=result["error"])
+            logger.error("License lookup failed for TX: %s", result["error"])
+            raise HTTPException(status_code=400, detail="License lookup failed. Please try again or enter your license info manually.")
 
         return {
             "results": result["results"],
@@ -1324,6 +1436,21 @@ def lookup_license_endpoint(payload: LicenseLookupRequest):
             first_name=payload.first_name or "",
             last_name=payload.last_name or "",
             license_number=payload.license_number or "",
+        )
+
+        return {
+            "results": results,
+            "count": len(results),
+        }
+
+    elif state_code == "FL":
+        from license_lookup import lookup_florida_license
+
+        results = lookup_florida_license(
+            first_name=payload.first_name or "",
+            last_name=payload.last_name or "",
+            license_number=payload.license_number or "",
+            license_type=payload.license_type,
         )
 
         return {
@@ -1400,6 +1527,75 @@ def get_nbrc_status_endpoint(current_user: User = Depends(get_current_user), db:
     """Get NBRC CMP status for the authenticated user."""
     from nbrc_tracker import get_nbrc_status
     return get_nbrc_status(db, current_user.id)
+
+
+@app.post("/api/nbrc/scrape", tags=["NBRC"])
+def scrape_nbrc_endpoint(payload: dict, current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
+    """Log into NBRC portal and pull real CMP data (credentials, cycle, assessments, CE hours).
+    
+    This is a Pro feature — keeps NBRC tracking up to date automatically.
+    """
+    require_pro(current_user, "nbrc_sync")
+    
+    email = payload.get("email")
+    password = payload.get("password")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+    
+    from nbrc_scraper import scrape_nbrc_portal
+    result = scrape_nbrc_portal(email, password)
+    
+    if not result.get("success"):
+        logger.error("NBRC scrape failed: %s", result.get("error", "unknown"))
+        raise HTTPException(status_code=400, detail="NBRC lookup failed. Please try again or enter your credentials manually.")
+    
+    # Save credentials to DB
+    from datetime import date as date_type
+    from models import NBRCCredential, NBRCAssessment
+    
+    # Clear old NBRC data
+    db.query(NBRCCredential).filter(NBRCCredential.user_id == current_user.id).delete()
+    db.query(NBRCAssessment).filter(NBRCAssessment.user_id == current_user.id).delete()
+    
+    # Add scraped credentials - but skip CRT if user has RRT or higher
+    has_rrt_or_higher = any(c["type"] in ("RRT", "RRT-NPS", "ACCS", "SDS", "RPFT", "AE-C") for c in result.get("credentials", []))
+    for cred in result.get("credentials", []):
+        if has_rrt_or_higher and cred["type"] == "CRT":
+            continue  # Skip CRT — RRT or higher supersedes it
+        # Convert MM/DD/YYYY to YYYY-MM-DD
+        parts = cred["earned_date"].split("/")
+        earned_iso = f"{parts[2]}-{parts[0]}-{parts[1]}" if len(parts) == 3 else None
+        parts = cred["expires"].split("/")
+        expires_iso = f"{parts[2]}-{parts[0]}-{parts[1]}" if len(parts) == 3 else None
+        
+        is_highest = cred["type"] in ("RRT", "RRT-NPS") and cred["type"] == "RRT"
+        
+        nbrc_cred = NBRCCredential(
+            user_id=current_user.id,
+            credential_type=cred["type"],
+            earned_date=date_type.fromisoformat(earned_iso) if earned_iso else None,
+            cmp_cycle_end=date_type.fromisoformat(expires_iso) if expires_iso else date_type.today(),
+            renewal_method="assessments",
+            is_highest=is_highest,
+        )
+        db.add(nbrc_cred)
+    
+    # Add assessment score
+    for assess in result.get("assessments", []):
+        score = float(assess.get("score", 0))
+        ce_required = 0 if score >= 38 else (15 if score >= 30 else 30)
+        nbrc_assess = NBRCAssessment(
+            user_id=current_user.id,
+            quarter=f"{date_type.today().year}-Q{(date_type.today().month - 1) // 3 + 1}",
+            score=score,
+            taken_date=date_type.today(),
+            credits_required=ce_required,
+        )
+        db.add(nbrc_assess)
+    
+    db.commit()
+    
+    return result
 
 @app.post("/api/nbrc/credentials", response_model=NBRCCredentialOut, tags=["NBRC"])
 def add_nbrc_credential(payload: NBRCCredentialCreate, current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):

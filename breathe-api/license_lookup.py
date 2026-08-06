@@ -930,6 +930,411 @@ def lookup_indiana_license(
     return results
 
 
+# ─── Florida MQA License Lookup ──────────────────────────────────
+#
+# Florida Department of Health MQA (Division of Medical Quality Assurance)
+# Search URL: https://mqa-internet.doh.state.fl.us/MQASearchServices/HealthCareProviders
+# Detail URL: https://mqa-internet.doh.state.fl.us/MQASearchServices/HealthcareProviders/LicenseVerification?LicInd=<ID>&Procde=<CODE>
+#
+# Flow:
+#   1. GET search page → captures __RequestVerificationToken (CSRF)
+#   2. POST search criteria → either:
+#      a) Redirects to LicenseVerification detail page (single match), or
+#      b) Returns results table with links to detail pages (multiple matches), or
+#      c) Returns "No records found" (no matches)
+#   3. GET detail page → <dl> with <dt>/<dd> pairs for license info
+
+FL_MQA_BASE = "https://mqa-internet.doh.state.fl.us"
+FL_MQA_SEARCH_URL = f"{FL_MQA_BASE}/MQASearchServices/HealthCareProviders"
+
+# Board of Respiratory Care (dropdown value)
+FL_MQA_BOARD_RESPIRATORY = "57"
+
+# Profession codes for Respiratory Therapists
+FL_MQA_PROFESSION_RRT = "5701"   # Registered Respiratory Therapist
+FL_MQA_PROFESSION_CRT = "5702"   # Certified Respiratory Therapist
+FL_MQA_PROFESSION_RCP_EXAM = "5703"  # Respiratory Care Practitioner by Exam
+FL_MQA_PROFESSION_RCP_CC = "5704"   # Respiratory Care Practitioner Critical Care
+FL_MQA_PROFESSION_RCP_NCC = "5705"  # Respiratory Care Practitioner Non-Critical Care
+
+
+class FloridaMQASession:
+    """Manages a session with the Florida MQA search portal.
+
+    Unlike TMB (ASP.NET) and Indiana PLA (ASP.NET), the FL MQA site uses
+    a plain HTML POST form with a __RequestVerificationToken (CSRF token).
+    """
+
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (compatible; Breathe/1.0; +https://breathe.app)"
+        })
+        self._token: Optional[str] = None
+
+    def _init_session(self) -> None:
+        """GET the search page to capture the CSRF token."""
+        r = self.session.get(FL_MQA_SEARCH_URL, timeout=15)
+        if r.status_code != 200:
+            raise RuntimeError(f"Florida MQA search page returned {r.status_code}")
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        token_input = soup.find("input", {"name": "__RequestVerificationToken"})
+        if not token_input:
+            raise RuntimeError("Could not find __RequestVerificationToken on FL MQA search page")
+
+        self._token = token_input.get("value", "")
+        logger.debug("Florida MQA session initialized")
+
+    def _ensure_session(self) -> None:
+        if self._token is None:
+            self._init_session()
+
+    def search(
+        self,
+        last_name: str = "",
+        first_name: str = "",
+        license_number: str = "",
+        board: str = FL_MQA_BOARD_RESPIRATORY,
+    ) -> requests.Response:
+        """Submit a search and return the response.
+
+        Returns the requests.Response object. The response URL tells us:
+        - If redirected to LicenseVerification → single result (detail page)
+        - If stayed on search page → either results table or "No records found"
+        """
+        self._ensure_session()
+
+        data = {
+            "__RequestVerificationToken": self._token,
+            "SearchDto.Board": board,
+            "SearchDto.Profession": "",
+            "SearchDto.LicenseNumber": license_number,
+            "SearchDto.BusinessName": "",
+            "SearchDto.LastName": last_name,
+            "SearchDto.FirstName": first_name,
+            "SearchDto.City": "",
+            "SearchDto.County": "",
+            "SearchDto.ZipCode": "",
+            "SearchDto.LicenseStatus": "ALL",
+        }
+
+        r = self.session.post(
+            FL_MQA_SEARCH_URL, data=data, timeout=20, allow_redirects=True
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"Florida MQA search POST returned {r.status_code}")
+
+        return r
+
+    def get_detail(self, detail_url: str) -> Optional[str]:
+        """GET a detail page by URL and return its HTML."""
+        if detail_url.startswith("/"):
+            detail_url = f"{FL_MQA_BASE}{detail_url}"
+
+        r = self.session.get(detail_url, timeout=15)
+        if r.status_code != 200:
+            return None
+        return r.text
+
+
+# ─── Florida Parsing ───────────────────────────────────────────
+
+def parse_florida_search_results(html: str) -> list[dict]:
+    """Parse the FL MQA search results table into a list of match dicts.
+
+    When there are multiple results, the page stays on the search URL and
+    shows a table with columns: License, Name, Profession, City, License Status.
+    Each license number is a link to the detail page.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # The results table has classes: table-striped, table-condensed, table-hover
+    # Find the table that contains license links
+    results_table = None
+    for table in soup.find_all("table"):
+        header_row = table.find("tr")
+        if header_row:
+            headers = [th.get_text(strip=True) for th in header_row.find_all(["th", "td"])]
+            if "License" in headers and "Name" in headers:
+                results_table = table
+                break
+
+    if not results_table:
+        return []
+
+    results = []
+    rows = results_table.find_all("tr")
+
+    for row in rows[1:]:  # Skip header
+        cells = row.find_all("td")
+        if len(cells) < 5:
+            continue
+
+        # Cell 0: License number (link to detail page)
+        license_link = cells[0].find("a", href=True)
+        license_number = cells[0].get_text(strip=True)
+        detail_href = license_link.get("href", "") if license_link else ""
+
+        # Cell 1: Name (format: "LAST, FIRST MIDDLE")
+        name_raw = cells[1].get_text(strip=True)
+        display_name = _normalize_name(name_raw)
+
+        # Cell 2: Profession
+        profession = cells[2].get_text(strip=True)
+
+        # Cell 3: City
+        city = cells[3].get_text(strip=True)
+
+        # Cell 4: License Status
+        status_raw = cells[4].get_text(strip=True)
+        status = _florida_normalize_status(status_raw)
+
+        results.append({
+            "name": display_name,
+            "fl_name": name_raw,
+            "license_number": license_number,
+            "license_type": _florida_short_license_type(profession),
+            "license_type_full": profession,
+            "status": status,
+            "issue_date": None,  # Only on detail page
+            "expiry_date": None,  # Only on detail page
+            "city": city,
+            "state": "FL",
+            "detail_href": detail_href,
+        })
+
+    return results
+
+
+def parse_florida_detail_page(html: str) -> dict:
+    """Parse the FL MQA licensee detail page HTML.
+
+    The detail page uses a <dl> with <dt>/<dd> pairs:
+      Profession, License, License Status, License Expiration Date,
+      License Original Issue Date, Address of Record, etc.
+
+    Also extracts the name from the page header.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    result = {
+        "name": None,
+        "fl_name": None,
+        "license_number": None,
+        "license_type": None,
+        "license_type_full": None,
+        "status": None,
+        "issue_date": None,
+        "expiry_date": None,
+        "city": None,
+        "state": "FL",
+    }
+
+    # Extract name from the page header (appears near "License Number:")
+    # Pattern in the page: "WILLIAM  SUBLETT JR\nLicense Number: RT22974"
+    # Look for the name before "License Number:"
+    full_text = soup.get_text(separator="\n", strip=True)
+    name_match = re.search(
+        r"License\s*Verification\s*Printer\s*Friendly.*?\n(.*?)\nLicense\s*Number:",
+        full_text, re.DOTALL
+    )
+    if name_match:
+        name_raw = name_match.group(1).strip()
+        result["fl_name"] = name_raw
+        result["name"] = _normalize_name(name_raw)
+
+    # Parse the <dl> definition list
+    dl = soup.find("dl")
+    if dl:
+        current_dt = None
+        for child in dl.children:
+            if not hasattr(child, "name") or not child.name:
+                continue
+            if child.name == "dt":
+                current_dt = child.get_text(strip=True).rstrip(":").strip()
+            elif child.name == "dd" and current_dt:
+                value = child.get_text(strip=True)
+                if not value:
+                    continue
+
+                key = current_dt.lower()
+
+                if key == "profession":
+                    result["license_type_full"] = value
+                    result["license_type"] = _florida_short_license_type(value)
+
+                elif key == "license":
+                    result["license_number"] = value
+
+                elif key == "license status":
+                    result["status"] = _florida_normalize_status(value)
+
+                elif key == "license expiration date":
+                    result["expiry_date"] = _normalize_date(value)
+
+                elif key == "license original issue date":
+                    result["issue_date"] = _normalize_date(value)
+
+                elif key == "address of record":
+                    # Address spans multiple <dd> tags; city/state/zip is in a later one
+                    # Format: "CITY, ST ZIP"
+                    if not result["city"]:
+                        # Try to parse city from this address line
+                        pass
+
+                current_dt = None
+
+    # Try to extract city from the address block
+    # The address <dd> tags contain: street, then "CITY, ST ZIP"
+    if dl:
+        dd_texts = [dd.get_text(strip=True) for dd in dl.find_all("dd")]
+        for dd_text in dd_texts:
+            # Match "CITY, ST ZIP" pattern (e.g. "INDIANAPOLIS, IN 46202")
+            city_match = re.search(
+                r"^([A-Z][A-Z\s]+?),\s*([A-Z]{2})\s+(\d{5})", dd_text
+            )
+            if city_match:
+                result["city"] = city_match.group(1).strip().title()
+                result["state"] = city_match.group(2)
+                break
+
+    # If name not found from header, try the <h3> or similar
+    if not result["name"]:
+        for tag in soup.find_all(["h3", "h4", "h2"]):
+            text = tag.get_text(strip=True)
+            if text and "License Number" not in text and "License Verification" not in text:
+                result["fl_name"] = text
+                result["name"] = _normalize_name(text)
+                break
+
+    return result
+
+
+def _florida_normalize_status(status_raw: str) -> str:
+    """Normalize FL MQA status strings to uppercase codes.
+
+    FL statuses: Clear/Active, Delinquent, Expired, Null and Void, Retired, etc.
+    """
+    if not status_raw:
+        return None
+    status_upper = status_raw.strip().upper()
+    # Remove trailing slash (some statuses have "DELINQUENT/")
+    status_upper = status_upper.rstrip("/")
+    return status_upper
+
+
+def _florida_short_license_type(full_type: str) -> str:
+    """Map FL MQA profession names to short license type codes.
+
+    e.g. "Registered Respiratory Therapist" → "RRT"
+         "Certified Respiratory Therapist" → "CRT"
+    """
+    if not full_type:
+        return ""
+    full_lower = full_type.lower()
+    if "registered respiratory" in full_lower:
+        return "RRT"
+    if "certified respiratory" in full_lower:
+        return "CRT"
+    if "respiratory care" in full_lower:
+        return "RCP"
+    # Fallback: first word uppercased
+    return full_type.split()[0].upper() if full_type else ""
+
+
+# ─── Florida Public API ───────────────────────────────────────
+
+def lookup_florida_license(
+    first_name: str = "",
+    last_name: str = "",
+    license_number: str = "",
+    license_type: str = "RCP",
+    fetch_details: bool = True,
+) -> list[dict]:
+    """Search Florida MQA for respiratory therapist licenses.
+
+    Searches by license number if provided, otherwise by name.
+    Returns a list of match dicts with license details.
+
+    Set fetch_details=False to return only the search results list
+    (without issue/expiry dates — those are on the detail page).
+    """
+    cache_key = _cache_key(
+        "fl_name",
+        first=first_name,
+        last=last_name,
+        num=license_number,
+        type=license_type,
+        details=fetch_details,
+    )
+
+    # Check cache
+    if cache_key in _cache:
+        entry = _cache[cache_key]
+        if time.time() - entry["ts"] < _CACHE_TTL:
+            return entry["data"]
+
+    try:
+        mqa = FloridaMQASession()
+
+        # Search by license number if provided, otherwise by name
+        response = mqa.search(
+            last_name=last_name,
+            first_name=first_name,
+            license_number=license_number,
+        )
+
+        # Check if redirected to a detail page (single match)
+        if "LicenseVerification" in response.url:
+            # Single match: the response is the detail page
+            detail = parse_florida_detail_page(response.text)
+            # If we searched by license number, ensure it's in the result
+            if license_number and not detail.get("license_number"):
+                detail["license_number"] = license_number
+            results = [detail]
+        else:
+            # Multiple matches or no matches
+            results = parse_florida_search_results(response.text)
+
+            if fetch_details and results:
+                # Fetch detail page for each result
+                enriched = []
+                for result in results:
+                    detail_href = result.pop("detail_href", "")
+                    if detail_href:
+                        try:
+                            detail_html = mqa.get_detail(detail_href)
+                            if detail_html:
+                                detail = parse_florida_detail_page(detail_html)
+                                # Merge detail info into result
+                                result["name"] = detail.get("name") or result["name"]
+                                result["fl_name"] = detail.get("fl_name") or result.get("fl_name")
+                                result["license_number"] = detail.get("license_number") or result["license_number"]
+                                result["license_type"] = detail.get("license_type") or result["license_type"]
+                                result["license_type_full"] = detail.get("license_type_full") or result["license_type_full"]
+                                result["status"] = detail.get("status") or result["status"]
+                                result["issue_date"] = detail.get("issue_date")
+                                result["expiry_date"] = detail.get("expiry_date")
+                                result["city"] = detail.get("city") or result.get("city")
+                                result["state"] = detail.get("state") or "FL"
+                            enriched.append(result)
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch FL detail: {e}")
+                            enriched.append(result)
+                    else:
+                        enriched.append(result)
+                results = enriched
+
+    except Exception as e:
+        logger.error(f"Florida MQA lookup failed: {e}")
+        return []
+
+    # Cache the result
+    _cache[cache_key] = {"ts": time.time(), "data": results}
+    return results
+
+
 if __name__ == "__main__":
     # Quick test
     import json
@@ -941,3 +1346,11 @@ if __name__ == "__main__":
     print("\n---\nTesting Indiana lookup by name: Sublett")
     in_results = lookup_indiana_license(last_name="Sublett")
     print(json.dumps(in_results, indent=2))
+
+    print("\n---\nTesting Florida lookup by license: RT22974")
+    fl_results = lookup_florida_license(license_number="RT22974")
+    print(json.dumps(fl_results, indent=2))
+
+    print("\n---\nTesting Florida lookup by name: Sublett")
+    fl_name_results = lookup_florida_license(last_name="Sublett")
+    print(json.dumps(fl_name_results, indent=2))

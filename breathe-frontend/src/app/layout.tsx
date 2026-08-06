@@ -4,7 +4,7 @@ import { AuthGate } from "@/components/auth-gate";
 
 export const metadata: Metadata = {
   title: "Breathe — RT CEU & Competency Tracker",
-  description: "Your career, organized.",
+  description: "CEU tracking that actually works. Free forever. $20/year to stop doing it manually.",
 };
 
 export default function RootLayout({

@@ -251,7 +251,7 @@ export default function CredentialsPage() {
         <div className="space-y-2">
           {nbrcCreds.length === 0 ? (
             <Card className="py-4 text-center text-text-secondary text-sm">
-              No NBRC credentials yet. Tap "Add Credential" below to add your RRT, NPS, etc.
+              No NBRC credentials yet. Tap &ldquo;Add Credential&rdquo; below to add your RRT, NPS, etc.
             </Card>
           ) : (
             nbrcCreds.map(renderCredentialCard)

@@ -13,27 +13,27 @@ from sqlalchemy.orm import Session
 def calculate_nbrc_ce_requirement(assessment_scores: list[float]) -> int:
     """Calculate CE requirement based on quarterly assessment scores.
 
-    NBRC rules (simplified):
-    - Average all 4 quarterly scores in a year
-    - High average (≥75%) → 0 CE needed for that year
-    - Mid average (50-74%) → 15 CE needed for that year
-    - Low average (<50%) or skipped → 30 CE needed for that year
-
-    Over 5 years, the total CE needed is the sum of yearly requirements.
-    But cap at 30 total (NBRC max).
+    NBRC rules (from portal):
+    - Score is out of 45 points
+    - High (≥38/45 = ~85%) → 0 CE needed
+    - Mid (30-37/45 = ~67-82%) → 15 CE needed
+    - Low (<30/45 = <67%) → 30 CE needed (maximum)
+    
+    The portal shows the current requirement based on latest assessment.
     """
     if not assessment_scores:
-        return 30  # Default if no assessments taken
-
-    yearly_requirements = []
-    # Group scores by year, calculate average per year
-    # For simplicity: if avg score >= 75 → 0, 50-74 → 15, <50 → 30
-
-    # This is simplified — actual NBRC rules are per-year
-    # For the 5-year cycle, sum up the yearly requirements
-    # But cap at 30 total (NBRC max)
-
-    return min(30, sum(yearly_requirements))
+        return 30  # Default if no assessments taken — max CE required
+    
+    # Use the most recent score (not average — NBRC shows current status)
+    latest_score = assessment_scores[-1]
+    
+    # NBRC scoring thresholds (out of 45)
+    if latest_score >= 38:
+        return 0   # High — no CE needed
+    elif latest_score >= 30:
+        return 15  # Mid — 15 CE needed
+    else:
+        return 30  # Low — 30 CE needed (maximum)
 
 
 def get_nbrc_status(db: Session, user_id: int) -> dict:

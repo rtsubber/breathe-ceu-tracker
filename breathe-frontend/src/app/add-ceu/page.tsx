@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Camera, FileText, ArrowLeft, Check, Loader2, AlertTriangle } from "lucide-react";
+import { Camera, FileText, ArrowLeft, Check, CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ceuCategories, categoryDisplay } from "@/lib/mock-data";
 import { Toast } from "@/components/toast";
@@ -25,6 +25,7 @@ export default function AddCEUPage() {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [certPath, setCertPath] = useState<string | null>(null);
   const [form, setForm] = useState<CEUCreateInput>({
     title: "",
     provider: "",
@@ -60,6 +61,7 @@ export default function AddCEUPage() {
         credits: Number(form.credits) || 0,
         completion_date:
           form.completion_date || new Date().toISOString().slice(0, 10),
+        certificate_path: certPath,
       });
       setShowToast(true);
       setTimeout(() => router.push("/dashboard"), 1200);
@@ -83,6 +85,10 @@ export default function AddCEUPage() {
         completion_date: result.completion_date || "",
         category: "clinical",
       });
+      // Save the cert file path so it gets attached to the CEU record
+      if (result.certificate_path) {
+        setCertPath(result.certificate_path);
+      }
       setMode("manual");
     } catch (err) {
       setError(err instanceof Error ? err.message : "OCR upload failed");
@@ -159,12 +165,12 @@ export default function AddCEUPage() {
                 </div>
                 <div className="flex-1">
                   <h2 className="text-lg font-bold text-text-primary">Upload Certificate</h2>
-                  <p className="text-sm text-text-secondary">Image file — OCR auto-fills the form</p>
+                  <p className="text-sm text-text-secondary">Image or PDF — OCR auto-fills the form</p>
                 </div>
               </Card>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,.pdf"
                 className="hidden"
                 onChange={(e) => handleFile(e.target.files?.[0])}
               />
@@ -207,21 +213,29 @@ export default function AddCEUPage() {
 
       {mode === "manual" && (
         <div className="px-4 space-y-4">
-          {/* File input placeholder */}
+          {/* Certificate attachment */}
           <label className="block">
             <Card className="flex flex-col items-center justify-center gap-2 p-8 border-2 border-dashed border-gray-200 hover:border-primary cursor-pointer transition-colors">
               {ocrLoading ? (
                 <Loader2 size={32} className="text-primary animate-spin" />
+              ) : certPath ? (
+                <>
+                  <CheckCircle2 size={32} className="text-success" />
+                  <p className="text-sm font-medium text-success">Certificate attached</p>
+                  <p className="text-xs text-text-secondary">Tap to replace</p>
+                </>
               ) : (
-                <Camera size={32} className="text-text-secondary" />
+                <>
+                  <Camera size={32} className="text-text-secondary" />
+                  <p className="text-sm font-medium text-text-secondary">
+                    {ocrLoading ? "Processing..." : "Add certificate photo (optional)"}
+                  </p>
+                </>
               )}
-              <p className="text-sm font-medium text-text-secondary">
-                {ocrLoading ? "Processing..." : "Add certificate photo (optional)"}
-              </p>
             </Card>
             <input
               type="file"
-              accept="image/*"
+              accept="image/*,.pdf"
               capture="environment"
               className="hidden"
               onChange={(e) => handleFile(e.target.files?.[0])}
