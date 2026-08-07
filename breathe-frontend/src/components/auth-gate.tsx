@@ -30,18 +30,19 @@ function AuthGuard({ children }: { children: ReactNode }) {
     if (user) {
       const needsOnboarding = !user.onboarding_completed;
 
+      // Only redirect from auth pages, not from public landing/pricing pages
+      const authPages = ["/login", "/register", "/onboarding"];
+      const isAuthPage = authPages.includes(pathname);
+
       // Logged in but hasn't finished onboarding → force to /onboarding
-      // (unless they're already there)
-      if (needsOnboarding && pathname !== "/onboarding") {
+      // (unless they're already there or on a public non-auth page like landing/pricing)
+      if (needsOnboarding && pathname !== "/onboarding" && !PUBLIC_ROUTES.has(pathname)) {
         router.replace("/onboarding");
         return;
       }
 
-      // Logged in AND onboarded, but sitting on auth/onboarding pages → dashboard
-      if (
-        !needsOnboarding &&
-        (pathname === "/login" || pathname === "/register" || pathname === "/onboarding")
-      ) {
+      // Logged in AND onboarded, but sitting on auth pages → dashboard
+      if (!needsOnboarding && isAuthPage) {
         router.replace("/dashboard");
         return;
       }

@@ -33,7 +33,7 @@ from models import (
     NBRCCredential, NBRCAssessment, NBRCCEPlan,
 )
 from auth import hash_password, verify_password, create_access_token, get_current_user, get_optional_user
-from email_webhook import router as email_router
+from email_webhook import router as email_router, generate_alias_email
 
 # Initialize DB tables on import
 init_db()
@@ -420,6 +420,20 @@ def register_user(payload: RegisterRequest, db: SessionLocal = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
+    # Auto-create email alias for CEU forwarding
+    try:
+        from models import UserEmailAlias
+        alias_email = generate_alias_email(user.name)
+        # Ensure uniqueness
+        existing = db.query(UserEmailAlias).filter(UserEmailAlias.email_alias == alias_email).first()
+        if not existing:
+            alias = UserEmailAlias(user_id=user.id, email_alias=alias_email)
+            db.add(alias)
+            db.commit()
+            print(f"✅ Created email alias for user {user.id}: {alias_email}")
+    except Exception as e:
+        print(f"⚠️ Failed to create email alias for user {user.id}: {e}")
+
     token = create_access_token(user.id, user.email)
     return AuthResponse(user=UserOut.model_validate(user), token=token)
 
@@ -485,6 +499,28 @@ def complete_onboarding(current_user: User = Depends(get_current_user), db: Sess
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
     """Get current user's profile (authenticated)."""
     return current_user
+
+
+@app.get("/api/me/email-alias", tags=["Users"])
+def get_my_email_alias(current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
+    """Get the user's CEU forwarding email alias."""
+    from models import UserEmailAlias
+    aliases = db.query(UserEmailAlias).filter(UserEmailAlias.user_id == current_user.id).all()
+    if not aliases:
+        # Auto-create one if missing
+        alias_email = generate_alias_email(current_user.name)
+        existing = db.query(UserEmailAlias).filter(UserEmailAlias.email_alias == alias_email).first()
+        if not existing:
+            alias = UserEmailAlias(user_id=current_user.id, email_alias=alias_email)
+            db.add(alias)
+            db.commit()
+            db.refresh(alias)
+            aliases = [alias]
+    return {
+        "aliases": [{"id": a.id, "email_alias": a.email_alias} for a in aliases],
+        "forwarding_address": aliases[0].email_alias if aliases else None,
+        "instructions": "Forward your CEU confirmation emails to this address. Breathe will automatically parse and log them."
+    }
 
 
 # ─── License Endpoints ──────────────────────────────────────────

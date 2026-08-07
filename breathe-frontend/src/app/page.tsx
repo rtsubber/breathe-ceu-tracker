@@ -4,7 +4,7 @@ import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { Smartphone, Camera, RefreshCw, Award, Bell, Shield } from "lucide-react";
+import { Smartphone, Camera, RefreshCw, Award, Bell, Shield, Loader2 } from "lucide-react";
 
 export default function SplashPage() {
   const { user } = useAuth();
@@ -67,6 +67,16 @@ export default function SplashPage() {
         </div>
       </div>
 
+      {/* CE Broker sync status banner */}
+      <div className="bg-accent/5 border-y border-accent/20 px-6 py-3">
+        <div className="max-w-2xl mx-auto flex items-center justify-center gap-2">
+          <Loader2 size={16} className="text-accent animate-spin" />
+          <p className="text-sm text-text-secondary">
+            <span className="font-semibold text-accent">CE Broker auto-sync</span> is in active development — landing soon for Texas RTs.
+          </p>
+        </div>
+      </div>
+
       {/* Features */}
       <div className="px-6 py-16">
         <div className="max-w-2xl mx-auto">
@@ -108,7 +118,10 @@ export default function SplashPage() {
                 <RefreshCw size={24} className="text-success" />
               </div>
               <div>
-                <h3 className="font-semibold text-text-primary mb-1">Auto-sync to CE Broker</h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="font-semibold text-text-primary">Auto-sync to CE Broker</h3>
+                  <span className="text-xs bg-accent/10 text-accent px-2 py-0.5 rounded-full font-medium">In Progress</span>
+                </div>
                 <p className="text-text-secondary text-sm">
                   Every CEU you track in Breathe gets pushed to CE Broker automatically.
                   You don&apos;t enter anything twice. Ever.

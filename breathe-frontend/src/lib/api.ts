@@ -528,6 +528,18 @@ export function getAssessmentReminder(): Promise<AssessmentReminder> {
   return apiFetch<AssessmentReminder>(`/api/nbrc/assessment-reminder`);
 }
 
+// ─── Email Alias API ───────────────────────────────────────────
+
+export type EmailAliasInfo = {
+  aliases: { id: number; email_alias: string }[];
+  forwarding_address: string | null;
+  instructions: string;
+};
+
+export function getEmailAlias(): Promise<EmailAliasInfo> {
+  return apiFetch<EmailAliasInfo>(`/api/me/email-alias`);
+}
+
 // ─── CE Broker Sync API ────────────────────────────────────────
 
 export type CEBrokerSyncResult = {
