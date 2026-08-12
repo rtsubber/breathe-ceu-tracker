@@ -321,7 +321,7 @@ def get_user_aliases(user_id: int, db: SessionLocal = Depends(get_db)):
 def generate_alias_email(name: str) -> str:
     """Generate a unique email alias from a user's name.
 
-    Format: firstname.lastname@breathe.ceu
+    Format: firstname.lastname@sublettlabs.com
     """
     parts = name.lower().split()
     if len(parts) >= 2:
@@ -330,4 +330,4 @@ def generate_alias_email(name: str) -> str:
         local = parts[0] if parts else "user"
     # Sanitize
     local = "".join(c for c in local if c.isalnum() or c == ".")
-    return f"{local}@breathe.ceu"
+    return f"{local}@sublettlabs.com"

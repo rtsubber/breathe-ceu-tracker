@@ -9,6 +9,13 @@ import uuid
 import logging
 from collections import defaultdict, deque
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger(__name__)
@@ -1692,11 +1699,27 @@ def get_assessment_reminder(current_user: User = Depends(get_current_user), db: 
 # ─── CE Broker Sync Endpoints ─────────────────────────────────
 
 class CEBrokerSyncResult(BaseModel):
-    synced: int
+    synced: int  # confirmed successes
     failed: int
+    submitted_unconfirmed: int = 0  # submitted but no confirmation detected
     errors: List[str] = []
     details: List[dict] = []
     message: Optional[str] = None
+
+
+class CEBrokerSyncLogOut(BaseModel):
+    id: int
+    ceu_id: int
+    status: str  # pending/submitted/confirmed/failed
+    attempt_count: int
+    error_message: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    created_at: datetime
+    ceu_title: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 @app.post("/api/cebroker/sync", response_model=CEBrokerSyncResult, tags=["CE Broker Sync"])
@@ -1704,10 +1727,16 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     """Sync all unreported CEUs to CE Broker.
 
     Logs into CE Broker via email + OTP (caught from AgentMail), then uploads
-    each CEU record that hasn't been synced yet. Marks successfully synced
-    CEUs as cebroker_synced=True in the database.
+    each CEU record that hasn't been synced yet. Only marks CEUs as
+    cebroker_synced=True after explicit confirmation is detected on the
+    CE Broker page (success message like "successfully", "received", "submitted").
+
+    Each CEU submission is wrapped in its own try/catch — failure of one
+    doesn't block the rest. Random 2-5 second delays between submissions
+    for human-like behavior.
     """
-    from cebroker_sync import sync_ceus_to_cebroker
+    from cebroker_sync import sync_ceus_to_cebroker, create_sync_log, update_sync_log
+    from models import CEBrokerSyncLog
 
     # Get all CEUs for this user that haven't been synced to CE Broker yet
     ceus = db.query(CEU).filter(
@@ -1721,8 +1750,15 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
             message="No CEUs to sync — all CEUs are already reported to CE Broker."
         )
 
+    # Create sync log entries (status=pending) for each CEU
+    sync_log_map = {}  # ceu_id -> log_id
+    for ceu in ceus:
+        log = create_sync_log(db, current_user.id, ceu.id, status="pending")
+        sync_log_map[ceu.id] = log.id
+
     ceus_to_sync = [
         {
+            "id": ceu.id,
             "title": ceu.title,
             "provider": ceu.provider,
             "credits": ceu.credits,
@@ -1735,15 +1771,31 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     # Run the sync agent (Playwright browser automation via Node subprocess)
     results = sync_ceus_to_cebroker(current_user.email, ceus_to_sync, headless=True)
 
-    # Mark successfully synced CEUs in the database
-    synced_titles = set()
-    for detail in results.get("details", []):
-        if detail.get("status") == "synced":
-            synced_titles.add(detail.get("title", ""))
+    # Process results: only mark synced=True for CONFIRMED successes
+    # "submitted" status means it was submitted but no confirmation detected — don't mark as synced
+    confirmed_ceu_ids = set()
+    submitted_ceu_ids = set()
+    failed_ceu_ids = set()
 
-    if synced_titles:
+    for detail in results.get("details", []):
+        ceu_id = detail.get("ceu_id")
+        status = detail.get("status")
+
+        if ceu_id and ceu_id in sync_log_map:
+            if status == "confirmed":
+                update_sync_log(db, ceu_id, "confirmed")
+                confirmed_ceu_ids.add(ceu_id)
+            elif status == "submitted":
+                update_sync_log(db, ceu_id, "submitted")
+                submitted_ceu_ids.add(ceu_id)
+            elif status == "failed":
+                update_sync_log(db, ceu_id, "failed", detail.get("message"))
+                failed_ceu_ids.add(ceu_id)
+
+    # Only mark CEUs as synced after CONFIRMED success
+    if confirmed_ceu_ids:
         for ceu in ceus:
-            if ceu.title in synced_titles:
+            if ceu.id in confirmed_ceu_ids:
                 ceu.cebroker_synced = True
                 ceu.cebroker_synced_at = datetime.utcnow()
         db.commit()
@@ -1751,6 +1803,7 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     return CEBrokerSyncResult(
         synced=results.get("synced", 0),
         failed=results.get("failed", 0),
+        submitted_unconfirmed=results.get("submitted_unconfirmed", 0),
         errors=results.get("errors", []),
         details=results.get("details", []),
     )
@@ -1775,6 +1828,43 @@ def get_cebroker_status(current_user: User = Depends(get_current_user), db: Sess
         "unsynced": unsynced_count,
         "all_synced": unsynced_count == 0 and total_ceus > 0,
     }
+
+
+@app.get("/api/cebroker/sync-log", tags=["CE Broker Sync"])
+def get_cebroker_sync_log(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Get sync attempt log entries for the authenticated user.
+
+    Returns the most recent sync log entries with CEU titles for context.
+    Each entry tracks status: pending → submitted → confirmed | failed.
+    """
+    from models import CEBrokerSyncLog
+
+    logs = db.query(CEBrokerSyncLog).filter(
+        CEBrokerSyncLog.user_id == current_user.id
+    ).order_by(
+        CEBrokerSyncLog.created_at.desc()
+    ).limit(min(limit, 200)).all()
+
+    result = []
+    for log in logs:
+        ceu = db.query(CEU).filter(CEU.id == log.ceu_id).first()
+        result.append({
+            "id": log.id,
+            "ceu_id": log.ceu_id,
+            "ceu_title": ceu.title if ceu else "(deleted)",
+            "status": log.status,
+            "attempt_count": log.attempt_count,
+            "error_message": log.error_message,
+            "submitted_at": log.submitted_at.isoformat() if log.submitted_at else None,
+            "confirmed_at": log.confirmed_at.isoformat() if log.confirmed_at else None,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        })
+
+    return {"logs": result, "count": len(result)}
 
 
 # ─── Health Check ───────────────────────────────────────────────

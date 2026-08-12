@@ -3,6 +3,7 @@ from database import (
     User, License, CEU, Credential, Competency, StateRequirement,
     UserEmailAlias, Subscription, FreeCourseAlert,
     NBRCCredential, NBRCAssessment, NBRCCEPlan,
+    CEBrokerSyncLog,
     Base, init_db,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "StateRequirement", "UserEmailAlias",
     "Subscription", "FreeCourseAlert",
     "NBRCCredential", "NBRCAssessment", "NBRCCEPlan",
+    "CEBrokerSyncLog",
     "Base", "init_db",
 ]

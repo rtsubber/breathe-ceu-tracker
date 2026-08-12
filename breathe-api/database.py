@@ -195,6 +195,28 @@ class NBRCCEPlan(Base):
     user = relationship("User", backref="nbrc_ce_plan")
 
 
+class CEBrokerSyncLog(Base):
+    """Sync attempt log for CE Broker submissions.
+    
+    Tracks each CEU sync attempt through states:
+    pending → submitted → confirmed | failed
+    """
+    __tablename__ = "cebroker_sync_log"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    ceu_id = Column(Integer, ForeignKey("ceus.id"), nullable=False)
+    status = Column(String(20), default="pending")  # pending/submitted/confirmed/failed
+    attempt_count = Column(Integer, default=1)
+    error_message = Column(Text, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="cebroker_sync_logs")
+    ceu = relationship("CEU", backref="sync_logs")
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)

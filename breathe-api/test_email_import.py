@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from database import SessionLocal, init_db
 from models import User, CEU, UserEmailAlias
 
-BASE_URL_DEFAULT = "http://localhost:8000"
+BASE_URL_DEFAULT = "http://localhost:8011"
 TEST_EMAILS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_emails")
 
 SAMPLE_FILES = [

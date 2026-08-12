@@ -70,6 +70,7 @@ def _strip_html(html: str) -> str:
     text = re.sub(r"<[^>]+>", "", html)
     # Decode entities
     import html as html_mod
+    import quopri
     text = html_mod.unescape(text)
     # Collapse blank lines
     lines = [ln.strip() for ln in text.splitlines()]
@@ -79,9 +80,25 @@ def _strip_html(html: str) -> str:
 def get_text_from_email(html_body: Optional[str], text_body: Optional[str]) -> str:
     """Return the best plain-text representation of an email."""
     if text_body and text_body.strip():
-        return text_body.strip()
+        text = text_body.strip()
+        # Decode quoted-printable if detected (=20, =3D, etc.)
+        if "=20" in text or "=3D" in text or "=\r\n" in text:
+            try:
+                text = quopri.decodestring(text.encode()).decode("utf-8", errors="ignore")
+            except Exception:
+                text = text.replace("=20", " ").replace("=3D", "=").replace("=\r\n", "")
+        # Remove quoted reply markers
+        text = "\n".join(line.lstrip("> ") for line in text.splitlines())
+        return text.strip()
     if html_body and html_body.strip():
-        return _strip_html(html_body.strip())
+        html = html_body.strip()
+        # Decode quoted-printable in HTML too
+        if "=20" in html or "=3D" in html:
+            try:
+                html = quopri.decodestring(html.encode()).decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+        return _strip_html(html)
     return ""
 
 
@@ -143,9 +160,18 @@ DATE_PATTERNS = [
 ]
 
 TITLE_PATTERNS = [
-    r"(?:course(?:\s+title)?|title)\s*[:.]\s*(.+?)(?:\n|$)",
-    r"Course:\s*(.+?)(?:\n|$)",
-    r"Subject:\s*(.+?)(?:\n|$)",  # often subject line has the title
+    # "Course Title: XYZ" at start of line
+    r"^(?:course(?:\s+title)?|title)\s*[:.]\s*(.+?)(?:\n|$)",
+    # "Course: XYZ" at start of line
+    r"^Course:\s*(.+?)(?:\n|$)",
+    # "Course Name: XYZ" at start of line
+    r"^Course\s+Name\s*[:.]\s*(.+?)(?:\n|$)",
+    # "Webinar: XYZ" / "Seminar: XYZ" / "Module: XYZ" at start of line
+    r"^(?:webinar|seminar|module|session|program)\s*[:.]\s*(.+?)(?:\n|$)",
+    # "You have completed: XYZ"
+    r"(?:completed|finished)\s*[:.]\s*(.+?)(?:\n|$)",
+    # " XYZ has been completed"
+    r"(.+?)\s+has\s+been\s+(?:successfully\s+)?completed",
 ]
 
 PROVIDER_PATTERNS = [
@@ -217,9 +243,9 @@ def _extract_date(text: str) -> Optional[str]:
 
 def _extract_title(text: str, subject: str = "") -> str:
     """Extract course title from text or subject line."""
-    # 1. Try labeled patterns in body
+    # 1. Try labeled patterns in body (MULTILINE so ^ matches line starts)
     for pat in TITLE_PATTERNS:
-        m = re.search(pat, text, re.I)
+        m = re.search(pat, text, re.I | re.MULTILINE)
         if m:
             title = m.group(1).strip()
             # Strip leading "Course:" or "Title:" labels that may be captured
@@ -236,14 +262,38 @@ def _extract_title(text: str, subject: str = "") -> str:
         ).strip(" :-|")
         if cleaned and len(cleaned) > 5:
             return cleaned
-    # 3. Fallback: first non-trivial line
+    # 3. Fallback: look for a line that looks like a course title
+    # Skip boilerplate lines (greetings, signatures, disclaimers, etc.)
+    skip_patterns = re.compile(
+        r"^(?:dear|hello|hi|thank|congratulations|please|this\s+is|you\s+have|"
+        r"your\s+ceu|for\s+questions|if\s+you|please\s+(?:reach|contact|call)|"
+        r"please\s+do\s+not|please\s+note|please\s+keep|for\s+more\s+info|"
+        r"to\s+view|to\s+access|click\s+(?:here|the)|you\s+can\s+(?:view|access|download)|"
+        r"this\s+email|this\s+is\s+an\s+auto|do\s+not\s+reply|reply\s+to|"
+        r"for\s+any\s+questions|feel\s+free|best\s+regards|sincerely|regards|"
+        r"warmly|cheers|thanks\s+again|thank\s+you\s+for|congratulations\s+on|"
+        r"your\s+certificate|you\s+have\s+successfully|you\s+have\s+completed|"
+        r"has\s+been\s+(?:completed|submitted|processed)|we\s+hope|we\s+are\s+happy|"
+        r"info@|support@|contact\s+us|call\s+us|hotline|\d{3}[.-]\d{3}[.-]\d{4}|"
+        r"http|www\.|©|all\s+rights|privacy|terms\s+of|unsubscribe)",
+        re.I
+    )
     for line in text.splitlines():
         ln = line.strip()
-        if len(ln) > 10 and not re.search(
-            r"^(?:dear|hello|hi|thank|congratulations|please|this\s+is|you\s+have|your\s+ceu)",
-            ln, re.I,
-        ):
-            return ln
+        if len(ln) < 5 or len(ln) > 200:
+            continue
+        if skip_patterns.search(ln):
+            continue
+        # Skip lines that are mostly URLs or email addresses
+        if re.match(r"^(?:https?://|www\.|[\w.]+@[\w.]+)", ln, re.I):
+            continue
+        # Skip lines that are just numbers or dates
+        if re.match(r"^[\d/\-:.,\s]+$", ln):
+            continue
+        # Skip lines with too many special characters
+        if sum(1 for c in ln if not c.isalnum() and c not in " .,;:'-") > len(ln) * 0.3:
+            continue
+        return ln
     return "Unknown Course"
 
 

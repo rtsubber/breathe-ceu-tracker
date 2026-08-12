@@ -578,12 +578,18 @@ export default function DashboardPage() {
               <div className={`mb-3 rounded-card p-3 text-sm ${
                 syncResult.failed > 0
                   ? "bg-warning/10 text-warning"
-                  : "bg-success/10 text-success"
+                  : syncResult.submitted_unconfirmed > 0
+                    ? "bg-accent/10 text-accent"
+                    : "bg-success/10 text-success"
               }`}>
                 <p className="font-medium">
-                  {syncResult.synced > 0 && `✓ ${syncResult.synced} synced. `}
+                  {syncResult.synced > 0 && `✓ ${syncResult.synced} confirmed. `}
+                  {syncResult.submitted_unconfirmed > 0 && `⏳ ${syncResult.submitted_unconfirmed} submitted (unconfirmed). `}
                   {syncResult.failed > 0 && `⚠ ${syncResult.failed} failed.`}
                 </p>
+                {syncResult.message && (
+                  <p className="text-xs mt-0.5 opacity-80">{syncResult.message}</p>
+                )}
                 {syncResult.errors.length > 0 && (
                   <ul className="mt-1 text-xs space-y-0.5">
                     {syncResult.errors.slice(0, 3).map((err, i) => (

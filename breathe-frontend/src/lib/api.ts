@@ -543,10 +543,16 @@ export function getEmailAlias(): Promise<EmailAliasInfo> {
 // ─── CE Broker Sync API ────────────────────────────────────────
 
 export type CEBrokerSyncResult = {
-  synced: number;
+  synced: number; // confirmed successes
   failed: number;
+  submitted_unconfirmed: number; // submitted but no confirmation detected
   errors: string[];
-  details: { title: string; status: "synced" | "failed"; message: string }[];
+  details: {
+    title: string;
+    status: "confirmed" | "submitted" | "failed";
+    message: string;
+    ceu_id?: number | null;
+  }[];
   message?: string;
 };
 
@@ -557,6 +563,18 @@ export type CEBrokerStatus = {
   all_synced: boolean;
 };
 
+export type CEBrokerSyncLogEntry = {
+  id: number;
+  ceu_id: number;
+  ceu_title: string;
+  status: "pending" | "submitted" | "confirmed" | "failed";
+  attempt_count: number;
+  error_message: string | null;
+  submitted_at: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+};
+
 export function syncToCEBroker(): Promise<CEBrokerSyncResult> {
   return apiFetch<CEBrokerSyncResult>(`/api/cebroker/sync`, {
     method: "POST",
@@ -565,4 +583,11 @@ export function syncToCEBroker(): Promise<CEBrokerSyncResult> {
 
 export function getCEBrokerStatus(): Promise<CEBrokerStatus> {
   return apiFetch<CEBrokerStatus>(`/api/cebroker/status`);
+}
+
+export function getCEBrokerSyncLog(): Promise<{
+  logs: CEBrokerSyncLogEntry[];
+  count: number;
+}> {
+  return apiFetch(`/api/cebroker/sync-log?limit=50`);
 }
