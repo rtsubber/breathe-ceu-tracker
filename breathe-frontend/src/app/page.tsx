@@ -204,7 +204,7 @@ export default function SplashPage() {
               <ul className="text-sm text-text-secondary space-y-2">
                 <li>✓ Everything in Free, plus:</li>
                 <li>✓ Certificate OCR (snap → auto-extract)</li>
-                <li>✓ Email forwarding (auto-parse CEU emails)</li>
+
                 <li>✓ AARC auto-import</li>
                 <li>✓ CE Broker auto-sync</li>
                 <li>✓ SMS reminders</li>

@@ -431,7 +431,6 @@ export function triggerFreeCourseScan(): Promise<ScanResponse> {
 
 export const PRO_FEATURES = {
   ocr: "Certificate OCR",
-  email_forwarding: "Email Forwarding",
   aarc_import: "AARC Auto-Import",
   browser_extension: "Browser Extension",
   push_notifications: "Push Notifications",

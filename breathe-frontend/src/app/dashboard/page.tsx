@@ -21,8 +21,6 @@ import {
   RefreshCw,
   CloudUpload,
   XCircle,
-  Mail,
-  Copy,
 } from "lucide-react";
 import {
   getUser,
@@ -35,7 +33,7 @@ import {
   getCEBrokerStatus,
   syncToCEBroker,
   getNBRCStatus,
-  getEmailAlias,
+
   formatDate,
   credStatus,
   type User,
@@ -49,7 +47,7 @@ import {
   type SubscriptionTier,
   type CEBrokerSyncResult,
   type CEBrokerStatus,
-  type EmailAliasInfo,
+
 } from "@/lib/api";
 import { NBRCStatusCard } from "@/components/nbrc-status";
 import { LicenseLookup } from "@/components/license-lookup";
@@ -76,8 +74,6 @@ export default function DashboardPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [nbrcStatus, setNbrcStatus] = useState<NBRCStatus | null>(null);
   const [addStateSelection, setAddStateSelection] = useState<string>("");
-  const [emailAlias, setEmailAlias] = useState<EmailAliasInfo | null>(null);
-  const [copiedAlias, setCopiedAlias] = useState(false);
 
   // Convert full state name to 2-letter code for API
   const stateNameToCode: Record<string, string> = {
@@ -101,7 +97,7 @@ export default function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [u, c, p, creds, lics, stReqs, fa, cbs, nbrc, alias] = await Promise.all([
+        const [u, c, p, creds, lics, stReqs, fa, cbs, nbrc] = await Promise.all([
           getUser(),
           getCEUs(),
           getProgress(),
@@ -111,7 +107,7 @@ export default function DashboardPage() {
           getFreeCourseAlerts().catch(() => [] as FreeCourseAlert[]),
           getCEBrokerStatus().catch(() => null as CEBrokerStatus | null),
           getNBRCStatus().catch(() => null as NBRCStatus | null),
-          getEmailAlias().catch(() => null as EmailAliasInfo | null),
+
         ]);
         if (cancelled) return;
         setUser(u);
@@ -124,7 +120,6 @@ export default function DashboardPage() {
         setFreeAlerts(fa);
         setCebrokerStatus(cbs);
         setNbrcStatus(nbrc);
-        setEmailAlias(alias);
         if (lics[0]) setSelectedState(lics[0].state);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load dashboard");
@@ -517,38 +512,7 @@ export default function DashboardPage() {
           </Card>
         </Link>
 
-      {/* Email Forwarding card */}
-      {emailAlias?.forwarding_address && (
-        <div className="mt-3">
-          <Card className="p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
-                <Mail size={20} className="text-accent" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-text-primary">Email Forwarding</p>
-                <p className="text-xs text-text-secondary">Forward CEU emails to auto-log credits</p>
-              </div>
-            </div>
-            <div className="bg-surface rounded-card p-3 flex items-center gap-2">
-              <code className="text-sm text-text-primary flex-1 truncate">{emailAlias.forwarding_address}</code>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(emailAlias.forwarding_address || "");
-                  setCopiedAlias(true);
-                  setTimeout(() => setCopiedAlias(false), 2000);
-                }}
-                className="text-text-secondary hover:text-primary flex-shrink-0"
-              >
-                {copiedAlias ? <CheckCircle2 size={16} className="text-success" /> : <Copy size={16} />}
-              </button>
-            </div>
-            <p className="text-xs text-text-secondary mt-2">
-              Forward CEU confirmation emails here. Breathe parses and logs them automatically.
-            </p>
-          </Card>
-        </div>
-      )}
+
 
       {/* CE Broker Sync card */}
         <div className="mt-3">

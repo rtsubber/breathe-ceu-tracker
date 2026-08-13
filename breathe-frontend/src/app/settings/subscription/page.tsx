@@ -153,7 +153,7 @@ export default function SubscriptionPage() {
 
           {tier === "free" && (
             <p className="text-sm text-text-secondary">
-              You&apos;re on the Free plan. Upgrade to unlock OCR, email forwarding,
+              You&apos;re on the Free plan. Upgrade to unlock OCR,
               and more.
             </p>
           )}
