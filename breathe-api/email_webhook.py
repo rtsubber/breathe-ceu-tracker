@@ -179,7 +179,7 @@ async def ceu_email_webhook(
         return CEUEmailResult(
             success=False,
             message=(
-                "Email forwarding requires Breathe Pro ($4.99/mo or $39/yr). "
+                "Email forwarding requires Breathe Pro ($25/yr). "
                 "Upgrade to unlock automatic CEU import from emails."
             ),
             user_id=user.id,
@@ -248,7 +248,7 @@ async def ceu_email_webhook_structured(
         return CEUEmailResult(
             success=False,
             message=(
-                "Email forwarding requires Breathe Pro ($4.99/mo or $39/yr). "
+                "Email forwarding requires Breathe Pro ($25/yr). "
                 "Upgrade to unlock automatic CEU import from emails."
             ),
             user_id=user.id,

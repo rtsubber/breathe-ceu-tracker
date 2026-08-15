@@ -2,7 +2,7 @@
 
 > Your career, organized.
 
-A CEU tracker built by an RRT, for RTs. Free for individual respiratory therapists. Pro is $20/year (intro pricing).
+A CEU tracker built by an RRT, for RTs. Free for individual respiratory therapists. Pro is $25/year flat.
 
 **Live at:** [breathe.sublettlabs.com](https://breathe.sublettlabs.com)
 
@@ -26,7 +26,7 @@ Breathe makes it painless — track your CEUs with OCR, auto-import from AARC, a
 - ✅ Competency tracking (annual + unit-specific)
 - ✅ Multi-state license support
 
-### Pro ($20/year intro, renews at $39)
+### Pro ($25/year flat)
 - ✅ Certificate OCR (snap photo → AI extracts everything)
 - ✅ Email forwarding (auto-parse CEU emails from 13+ providers)
 - ✅ AARC auto-import

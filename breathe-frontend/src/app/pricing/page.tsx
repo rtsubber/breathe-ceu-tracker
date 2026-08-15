@@ -10,7 +10,7 @@ export default function PricingPage() {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("yearly");
-  // Billing toggle hidden — intro pricing is $20/yr flat
+  // Billing toggle hidden — flat pricing is $25/yr
   void billingCycle; void setBillingCycle;
 
   const handleSubscribe = async (tier: "pro" | "department") => {
@@ -52,23 +52,23 @@ export default function PricingPage() {
     {
       name: "Pro",
       icon: Sparkles,
-      price: "$20",
-      period: "/year (1st year)",
-      description: "Stop typing. Let the app do the work — OCR, auto-import, CE Broker sync.",
+      price: "$25",
+      period: "/year",
+      description: "Stop typing. Let the app do the work — OCR, auto-import, email forwarding.",
       features: [
         "Everything in Free, plus:",
         "Certificate OCR (snap → auto-extract)",
         "Email forwarding (auto-parse CEUs)",
         "AARC auto-import",
-        "CE Broker auto-sync ← never type into CE Broker again",
+        "CE Broker auto-sync (coming soon — included free when ready)",
         "SMS reminders",
         "Multi-state license support",
         "Chrome extension (coming soon)",
       ],
-      cta: "Upgrade to Pro — $20",
+      cta: "Upgrade to Pro — $25",
       ctaAction: () => handleSubscribe("pro"),
       highlighted: true,
-      savings: "Intro pricing — renews at $39/yr",
+      savings: "$25/year flat — less than CE Broker",
     },
     {
       name: "Department",
@@ -178,7 +178,7 @@ export default function PricingPage() {
 
       <div className="px-4 mt-6 text-center">
         <p className="text-xs text-text-secondary">
-          Cancel anytime. Pro is $20/yr intro — renews at $39/yr. Cheaper than CE Tracker ($60/yr) and CE Broker ($29-99/yr).
+          Cancel anytime. Pro is $25/year flat. Less than CE Broker ($29-99/yr).
           Department is $99/mo flat for up to 25 RTs.
         </p>
       </div>

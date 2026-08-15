@@ -308,7 +308,7 @@ def require_pro(user: User, feature: str):
             detail={
                 "error": "pro_required",
                 "feature": feature,
-                "message": f"{feature} requires Breathe Pro ($4.99/mo or $39/yr). Upgrade to unlock.",
+                "message": f"{feature} requires Breathe Pro ($25/yr). Upgrade to unlock.",
                 "upgrade_url": "/pricing",
             },
         )

@@ -202,7 +202,7 @@ export default function SubscriptionPage() {
               Ready to upgrade?
             </h3>
             <p className="text-sm text-text-secondary mb-4">
-              Pro is $4.99/mo or $39/yr. Cancel anytime.
+              Pro is $25/yr. Cancel anytime.
             </p>
             <Link href="/pricing">
               <Button size="lg" className="w-full">
