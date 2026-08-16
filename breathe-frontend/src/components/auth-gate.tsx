@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { Loader2 } from "lucide-react";
 
-const PUBLIC_ROUTES = new Set(["/", "/login", "/register", "/pricing"]);
+const PUBLIC_ROUTES = new Set(["/", "/login", "/register", "/pricing", "/terms", "/privacy"]);
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_ROUTES.has(pathname)) return true;

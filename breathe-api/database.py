@@ -1,6 +1,6 @@
 """Database setup for Breathe API — SQLite for prototype."""
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Date, JSON, ForeignKey, Text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Date, JSON, ForeignKey, Text, Boolean, CheckConstraint
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 from datetime import datetime
 
@@ -17,7 +17,14 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=True)  # NULL for legacy/demo users
+    # nullable=False — password must always be set; no NULL or empty hashes allowed.
+    # NOTE: This constraint is enforced on new SQLite tables only. For existing DBs,
+    # run a migration to backfill/remove NULL rows before applying the constraint.
+    # See: alembic or manual `ALTER TABLE` + `CREATE TABLE` with the check.
+    password_hash = Column(String(255), nullable=False)
+    __table_args__ = (
+        CheckConstraint("length(password_hash) > 0", name="password_hash_not_empty"),
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Subscription fields
@@ -26,6 +33,7 @@ class User(Base):
     stripe_customer_id = Column(String(255), nullable=True)
     subscription_expires = Column(DateTime, nullable=True)
     onboarding_completed = Column(Boolean, default=False)  # False until user completes onboarding
+    cebroker_email_encrypted = Column(String(500), nullable=True)  # Encrypted CE Broker login email (via crypto.py)
 
     licenses = relationship("License", back_populates="user", cascade="all, delete-orphan")
     ceus = relationship("CEU", back_populates="user", cascade="all, delete-orphan")
@@ -193,6 +201,25 @@ class NBRCCEPlan(Base):
     last_calculated = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", backref="nbrc_ce_plan")
+
+
+class AuditLog(Base):
+    """Audit log for tracking user actions across the API.
+    
+    Records key actions like CEU create/update/delete, login, register,
+    license create/update for compliance and security tracking.
+    """
+    __tablename__ = "audit_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    action = Column(String(50), nullable=False)  # ceu_create, ceu_update, ceu_delete, login, register, license_create, license_update
+    entity_type = Column(String(30), nullable=False)  # ceu, license, credential
+    entity_id = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)  # JSON dump of relevant data
+    ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="audit_logs")
 
 
 class CEBrokerSyncLog(Base):

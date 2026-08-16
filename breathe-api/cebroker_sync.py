@@ -30,6 +30,15 @@ import tempfile
 from datetime import datetime
 from typing import Optional
 
+try:
+    from crypto import is_encryption_available, decrypt_field
+except ImportError:
+    # Graceful fallback if crypto module not available
+    def is_encryption_available() -> bool:
+        return False
+    def decrypt_field(ciphertext):
+        return None
+
 logger = logging.getLogger(__name__)
 
 AGENTMAIL_CONFIG_PATH = "/home/ron/.openclaw/workspace/.agentmail_config.json"
@@ -900,17 +909,65 @@ async function checkSessionAlive(page) {
 """
 
 
-def sync_ceus_to_cebroker(email, ceus_to_sync, headless=True):
+def sync_ceus_to_cebroker(email, ceus_to_sync, headless=True, encrypted_email=None):
     """Run the CE Broker sync via Playwright browser automation.
 
     Args:
-        email: CE Broker login email
+        email: CE Broker login email (plaintext — either direct or decrypted from encrypted_email)
         ceus_to_sync: List of dicts with title, provider, credits, completion_date, category, id
         headless: Run browser in headless mode
+        encrypted_email: Optional encrypted CE Broker email from DB. If provided and email
+                        is empty, will be decrypted using BREATHE_ENCRYPTION_KEY.
 
     Returns:
         Dict with synced, failed, submitted_unconfirmed, errors, details
+
+    Note:
+        CE Broker sync requires BREATHE_ENCRYPTION_KEY to be set. If the key is not
+        configured, sync is gracefully disabled with a clear error message.
     """
+    # ─── Encryption key check ───────────────────────────────────
+    if not is_encryption_available():
+        error_msg = ("CE Broker sync disabled: BREATHE_ENCRYPTION_KEY environment variable "
+                     "is not set. Configure it to enable CE Broker sync.")
+        logger.error(error_msg)
+        return {
+            "synced": 0,
+            "failed": len(ceus_to_sync) if ceus_to_sync else 0,
+            "submitted_unconfirmed": 0,
+            "errors": [error_msg],
+            "details": [],
+            "message": error_msg,
+        }
+
+    # ─── Decrypt CE Broker email if needed ─────────────────────
+    if not email and encrypted_email:
+        email = decrypt_field(encrypted_email)
+        if not email:
+            error_msg = ("CE Broker sync disabled: could not decrypt CE Broker email. "
+                         "Check that BREATHE_ENCRYPTION_KEY matches the key used to encrypt the email.")
+            logger.error(error_msg)
+            return {
+                "synced": 0,
+                "failed": len(ceus_to_sync) if ceus_to_sync else 0,
+                "submitted_unconfirmed": 0,
+                "errors": [error_msg],
+                "details": [],
+                "message": error_msg,
+            }
+
+    if not email:
+        error_msg = "CE Broker sync disabled: no CE Broker login email configured."
+        logger.error(error_msg)
+        return {
+            "synced": 0,
+            "failed": len(ceus_to_sync) if ceus_to_sync else 0,
+            "submitted_unconfirmed": 0,
+            "errors": [error_msg],
+            "details": [],
+            "message": error_msg,
+        }
+
     if not ceus_to_sync:
         return {
             "synced": 0,
@@ -999,6 +1056,11 @@ def sync_ceus_to_cebroker(email, ceus_to_sync, headless=True):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    # Check encryption key before running test
+    if not is_encryption_available():
+        print("ERROR: BREATHE_ENCRYPTION_KEY not set. CE Broker sync requires encryption key.")
+        print("Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"")
+        exit(1)
     # Test with a single CEU
     test_ceus = [
         {

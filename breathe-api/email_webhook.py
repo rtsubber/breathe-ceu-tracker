@@ -3,9 +3,17 @@
 Supports Resend Inbound format (and generic SMTP webhook payloads).
 POST /api/email/ceu-webhook receives the email, parses CEU data, saves
 certificate attachments, and creates a CEU record in the database.
+
+All webhook endpoints are protected with HMAC-SHA256 signature verification
+using BREATHE_WEBHOOK_SECRET. Resend uses Svix under the hood, so we verify
+svix-signature headers. We also accept a simple resend-signature header for
+non-Svix webhook configurations.
 """
 import os
 import sys
+import hmac
+import hashlib
+import base64
 import logging
 from typing import Optional
 
@@ -22,6 +30,85 @@ from datetime import datetime, date as date_type
 logger = logging.getLogger("breathe.email_webhook")
 
 router = APIRouter(prefix="/api/email", tags=["Email CEU Import"])
+
+
+# ─── Webhook Signature Verification ─────────────────────────────
+
+def _verify_webhook_signature(request: Request, raw_body: bytes) -> None:
+    """Verify the HMAC-SHA256 signature of an incoming webhook request.
+
+    Supports two signature schemes:
+    1. Svix (used by Resend): headers svix-id, svix-timestamp, svix-signature
+       Signature is HMAC-SHA256 of "{svix-id}.{svix-timestamp}.{raw_body}"
+       encoded as base64, prefixed with "v1,".
+    2. Simple resend-signature header: HMAC-SHA256 of raw_body as hex.
+
+    Raises HTTPException(401) if signature is missing or invalid.
+    Raises HTTPException(503) if BREATHE_WEBHOOK_SECRET is not configured.
+    """
+    secret = os.environ.get("BREATHE_WEBHOOK_SECRET")
+    if not secret:
+        logger.error("BREATHE_WEBHOOK_SECRET not set — rejecting webhook")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook secret not configured. Set BREATHE_WEBHOOK_SECRET environment variable.",
+        )
+
+    secret_bytes = secret.encode("utf-8") if not secret.startswith("whsec_") else secret.encode("utf-8")
+
+    # --- Try Svix-style verification (Resend's default) ---
+    svix_signature = request.headers.get("svix-signature")
+    svix_id = request.headers.get("svix-id", "")
+    svix_timestamp = request.headers.get("svix-timestamp", "")
+
+    if svix_signature:
+        # Svix format: "v1,<base64-encoded-hmac>"
+        # The signed message is: "{svix-id}.{svix-timestamp}.{raw_body}"
+        signed_content = f"{svix_id}.{svix_timestamp}.".encode("utf-8") + raw_body
+
+        # Extract all v1 signatures (there can be multiple, separated by spaces)
+        signatures = []
+        for part in svix_signature.split():
+            if part.startswith("v1,"):
+                signatures.append(part[3:])
+
+        if not signatures:
+            logger.warning("svix-signature present but no v1, prefix found")
+            raise HTTPException(status_code=401, detail="Invalid signature format")
+
+        # Compute expected HMAC-SHA256
+        expected = base64.b64encode(
+            hmac.new(secret_bytes, signed_content, hashlib.sha256).digest()
+        ).decode("utf-8")
+
+        # Compare against any provided signature using constant-time comparison
+        verified = any(hmac.compare_digest(expected, sig) for sig in signatures)
+
+        if not verified:
+            logger.warning("Svix signature verification failed")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+        return  # Verified via Svix
+
+    # --- Try simple resend-signature header ---
+    simple_sig = request.headers.get("resend-signature")
+    if simple_sig:
+        expected = hmac.new(
+            secret_bytes, raw_body, hashlib.sha256
+        ).hexdigest()
+
+        if hmac.compare_digest(expected, simple_sig):
+            return  # Verified via simple signature
+
+        logger.warning("resend-signature verification failed")
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # --- No signature header at all ---
+    logger.warning("No signature header found on webhook request")
+    raise HTTPException(
+        status_code=401,
+        detail="Missing webhook signature. Expected svix-signature or resend-signature header.",
+    )
 
 
 # ─── Pydantic schemas ───────────────────────────────────────────
@@ -148,7 +235,16 @@ async def ceu_email_webhook(
     The 'to' address is matched against user_email_aliases to find the
     owner. CEU data is parsed from the email body and a CEU record is
     created automatically.
+
+    **Protected**: Requires valid HMAC-SHA256 signature in svix-signature
+    or resend-signature header, verified against BREATHE_WEBHOOK_SECRET.
     """
+    # Read raw body first for signature verification
+    raw_body = await request.body()
+
+    # Verify webhook signature (raises 401/503 on failure)
+    _verify_webhook_signature(request, raw_body)
+
     # Parse JSON body (accept extra fields gracefully)
     try:
         payload = await request.json()
@@ -225,13 +321,30 @@ async def ceu_email_webhook(
 
 @router.post("/ceu-webhook/structured", response_model=CEUEmailResult)
 async def ceu_email_webhook_structured(
-    payload: EmailWebhookPayload,
+    request: Request,
     db: SessionLocal = Depends(get_db),
 ):
     """Structured POST variant (JSON body validated by Pydantic).
 
     Same behavior as /ceu-webhook but with a strict schema.
+
+    **Protected**: Requires valid HMAC-SHA256 signature in svix-signature
+    or resend-signature header, verified against BREATHE_WEBHOOK_SECRET.
     """
+    # Read raw body first for signature verification
+    raw_body = await request.body()
+
+    # Verify webhook signature (raises 401/503 on failure)
+    _verify_webhook_signature(request, raw_body)
+
+    # Parse and validate with Pydantic
+    try:
+        import json
+        payload_dict = json.loads(raw_body)
+        payload = EmailWebhookPayload.model_validate(payload_dict)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
     raw = payload.model_dump(by_alias=True, exclude_none=True)
     parsed = parse_resend_inbound(raw)
 

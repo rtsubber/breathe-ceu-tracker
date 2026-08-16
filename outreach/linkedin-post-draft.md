@@ -21,7 +21,7 @@ It's called Breathe — a CEU tracker built by an RT, for RTs. Here's what it ac
 📱 Snap a photo of your CEU certificate → AI extracts the credits. No typing.
 🔄 Auto-syncs to CE Broker. You don't enter anything twice.
 📊 Tracks your state license, NBRC CMP cycle, and competencies in one place.
-💰 Free for individuals. Pro is $20/year.
+💰 Free for individuals. Pro is $25/year.
 
 It's live right now. No waitlist, no demo request form. Just go use it.
 
@@ -44,7 +44,7 @@ So I built Breathe — CEU tracking that actually respects your time.
 📷 Photo → AI extracts credits
 🔄 Auto-syncs to CE Broker
 📊 State license + NBRC + competencies
-💰 Free for individuals, $20/year Pro
+💰 Free for individuals, $25/year Pro
 
 breathe.sublettlabs.com
 

@@ -12,6 +12,7 @@ import os
 import re
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -69,6 +70,87 @@ def save_certificate_image(file_bytes: bytes, filename: str, user_id: int) -> st
     with open(save_path, "wb") as f:
         f.write(file_bytes)
     return save_path
+
+
+# ─── Temp file cleanup ─────────────────────────────────────────
+
+CERT_TEMP_DIR = "/tmp/breathe/certificates"
+CERT_MAX_AGE_SECONDS = 3600  # 1 hour
+
+
+def _safe_delete_file(file_path: str) -> None:
+    """Delete a file silently, ignoring errors if it doesn't exist."""
+    try:
+        if file_path and os.path.isfile(file_path):
+            os.remove(file_path)
+            logger.debug("Deleted temp certificate file: %s", file_path)
+        # Also try to remove the user directory if it's now empty
+        parent = os.path.dirname(file_path) if file_path else ""
+        if parent and os.path.isdir(parent):
+            try:
+                os.rmdir(parent)  # Only succeeds if empty
+            except OSError:
+                pass  # Directory not empty, leave it
+    except Exception as e:
+        logger.warning("Failed to delete temp file %s: %s", file_path, e)
+
+
+def cleanup_old_temp_files(max_age_seconds: int = CERT_MAX_AGE_SECONDS) -> dict:
+    """Scan /tmp/breathe/certificates/ and delete files older than max_age_seconds.
+
+    This is a backstop cleanup function — it catches files that slip through
+    the try/finally in process_certificate (e.g. if the process crashed).
+
+    Returns a summary dict with counts.
+    """
+    deleted_files = 0
+    deleted_dirs = 0
+    errors = 0
+    now = time.time()
+
+    if not os.path.isdir(CERT_TEMP_DIR):
+        return {"deleted_files": 0, "deleted_dirs": 0, "errors": 0, "scanned": False}
+
+    for root, dirs, files in os.walk(CERT_TEMP_DIR, topdown=False):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            try:
+                if os.path.isfile(fpath):
+                    mtime = os.path.getmtime(fpath)
+                    if (now - mtime) > max_age_seconds:
+                        os.remove(fpath)
+                        deleted_files += 1
+                        logger.info("Cleanup: deleted stale temp cert file: %s", fpath)
+            except Exception as e:
+                errors += 1
+                logger.warning("Cleanup: error deleting %s: %s", fpath, e)
+
+        # Remove empty user directories
+        for dname in dirs:
+            dpath = os.path.join(root, dname)
+            try:
+                if os.path.isdir(dpath) and not os.listdir(dpath):
+                    os.rmdir(dpath)
+                    deleted_dirs += 1
+                    logger.debug("Cleanup: removed empty dir: %s", dpath)
+            except Exception as e:
+                errors += 1
+                logger.warning("Cleanup: error removing dir %s: %s", dpath, e)
+
+    # Try to remove the top-level dir if empty
+    try:
+        if os.path.isdir(CERT_TEMP_DIR) and not os.listdir(CERT_TEMP_DIR):
+            os.rmdir(CERT_TEMP_DIR)
+            deleted_dirs += 1
+    except Exception:
+        pass
+
+    return {
+        "deleted_files": deleted_files,
+        "deleted_dirs": deleted_dirs,
+        "errors": errors,
+        "scanned": True,
+    }
 
 
 def extract_text_from_image(image_path: str) -> list:
@@ -449,16 +531,24 @@ def parse_ceu_data(extracted: list) -> dict:
     return parse_with_regex(extracted)
 
 
-def process_certificate(image_path: str) -> dict:
+def process_certificate(image_path: str, cleanup: bool = True) -> dict:
     """Full OCR pipeline: extract text from image or PDF and parse CEU data.
 
     1. For images: easyocr extracts raw text
     2. For PDFs: PyMuPDF extracts digital text directly
     3. Claude API parses raw text into structured CEU data
     4. Falls back to regex parser if Claude fails
+
+    By default, deletes the temporary certificate file after processing
+    to avoid leaving PII (name, DOB, license number) on disk.
+    Set cleanup=False to keep the file (e.g. when the caller manages lifecycle).
     """
-    if is_pdf(image_path):
-        extracted = extract_text_from_pdf(image_path)
-    else:
-        extracted = extract_text_from_image(image_path)
-    return parse_ceu_data(extracted)
+    try:
+        if is_pdf(image_path):
+            extracted = extract_text_from_pdf(image_path)
+        else:
+            extracted = extract_text_from_image(image_path)
+        return parse_ceu_data(extracted)
+    finally:
+        if cleanup:
+            _safe_delete_file(image_path)

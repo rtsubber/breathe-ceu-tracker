@@ -18,7 +18,7 @@ What it does:
 - Snap a photo of a CEU certificate → AI extracts the credits automatically (no manual entry)
 - Auto-syncs to CE Broker so you don't have to enter things twice
 - Tracks NBRC CMP cycle (5-year), state license requirements, competencies
-- Free for individuals. Pro is $20/year intro.
+- Free for individuals. Pro is $25/year intro.
 
 It's live right now at breathe.sublettlabs.com.
 

@@ -37,7 +37,7 @@ Same thing. Enter your NBRC login. Breathe pulls your credentials, your 5-year C
 
 The whole thing — account to tracking CEUs on both your state and national side — takes under 2 minutes.
 
-CEU tracking that actually works. Free forever. $20/year to stop doing it manually.
+CEU tracking that actually works. Free forever. $25/year to stop doing it manually.
 
 breathe.sublettlabs.com
 
@@ -72,7 +72,7 @@ Then adding CEUs:
 📧 Forward the email → parsed and logged
 🔄 Auto-syncs to CE Broker — never enter anything twice
 
-Free forever. $20/year to stop doing it manually.
+Free forever. $25/year to stop doing it manually.
 
 breathe.sublettlabs.com
 

@@ -41,6 +41,7 @@ from models import (
 )
 from auth import hash_password, verify_password, create_access_token, get_current_user, get_optional_user
 from email_webhook import router as email_router, generate_alias_email
+from audit import log_audit
 
 # Initialize DB tables on import
 init_db()
@@ -416,11 +417,21 @@ def register_user(payload: RegisterRequest, db: SessionLocal = Depends(get_db)):
     if len(payload.password) < 8 or not any(c.isalpha() for c in payload.password) or not any(c.isdigit() for c in payload.password):
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include a letter and a number")
 
+    # ─── Launch period workaround ─────────────────────────────────────
+    # During the launch period all new signups receive Pro features for free.
+    # Set LAUNCH_FREE_PRO=false (in .env or environment) once we start charging
+    # for Pro — new signups will then get the standard free tier instead.
+    # Existing users are unaffected by this flag; only new signups respect it.
+    launch_free_pro = os.environ.get("LAUNCH_FREE_PRO", "true").lower() == "true"
+    if launch_free_pro:
+        logger.warning("⚠️ LAUNCH FREE PRO ACTIVE — all new signups get Pro free. Set LAUNCH_FREE_PRO=false when charging begins.")
+
+    signup_tier = "pro" if launch_free_pro else "free"
     user = User(
         name=payload.name.strip(),
         email=email,
         password_hash=hash_password(payload.password),
-        subscription_tier="pro",  # Launch period: all signups get Pro free
+        subscription_tier=signup_tier,
         subscription_status="active",
     )
     db.add(user)
@@ -440,6 +451,12 @@ def register_user(payload: RegisterRequest, db: SessionLocal = Depends(get_db)):
             print(f"✅ Created email alias for user {user.id}: {alias_email}")
     except Exception as e:
         print(f"⚠️ Failed to create email alias for user {user.id}: {e}")
+
+    # Audit log — register
+    try:
+        log_audit(db, user_id=user.id, action="register", entity_type="user", entity_id=user.id, details={"email": email, "name": payload.name.strip()})
+    except Exception:
+        pass
 
     token = create_access_token(user.id, user.email)
     return AuthResponse(user=UserOut.model_validate(user), token=token)
@@ -474,6 +491,12 @@ def login_user(payload: LoginRequest, db: SessionLocal = Depends(get_db)):
 
     # Successful login — reset failure counter
     _login_failures.pop(email, None)
+
+    # Audit log — login
+    try:
+        log_audit(db, user_id=user.id, action="login", entity_type="user", entity_id=user.id, details={"email": email})
+    except Exception:
+        pass
 
     token = create_access_token(user.id, user.email)
     return AuthResponse(user=UserOut.model_validate(user), token=token)
@@ -546,6 +569,13 @@ def add_license(payload: LicenseCreate, current_user: User = Depends(get_current
     db.add(lic)
     db.commit()
     db.refresh(lic)
+
+    # Audit log — license_create
+    try:
+        log_audit(db, user_id=user_id, action="license_create", entity_type="license", entity_id=lic.id, details={"state": payload.state, "license_type": payload.license_type, "license_number": payload.license_number})
+    except Exception:
+        pass
+
     return lic
 
 
@@ -570,6 +600,13 @@ def add_ceu(payload: CEUCreate, current_user: User = Depends(get_current_user), 
     db.add(ceu)
     db.commit()
     db.refresh(ceu)
+
+    # Audit log — ceu_create
+    try:
+        log_audit(db, user_id=current_user.id, action="ceu_create", entity_type="ceu", entity_id=ceu.id, details={"title": ceu.title, "provider": ceu.provider, "credits": ceu.credits, "category": ceu.category})
+    except Exception:
+        pass
+
     return ceu
 
 
@@ -579,8 +616,17 @@ def delete_ceu(ceu_id: int, current_user: User = Depends(get_current_user), db: 
     ceu = db.query(CEU).filter(CEU.id == ceu_id, CEU.user_id == current_user.id).first()
     if not ceu:
         raise HTTPException(status_code=404, detail="CEU not found")
+    # Capture title before deletion for audit log
+    ceu_title = ceu.title
     db.delete(ceu)
     db.commit()
+
+    # Audit log — ceu_delete
+    try:
+        log_audit(db, user_id=current_user.id, action="ceu_delete", entity_type="ceu", entity_id=ceu_id, details={"title": ceu_title})
+    except Exception:
+        pass
+
     return {"success": True, "id": ceu_id}
 
 @app.post("/api/ceus/ocr", response_model=OCRResult, tags=["CEUs"])
@@ -1707,6 +1753,18 @@ class CEBrokerSyncResult(BaseModel):
     message: Optional[str] = None
 
 
+class CEBrokerEmailSettings(BaseModel):
+    """CE Broker login email settings — stored encrypted in DB."""
+    cebroker_email: Optional[str] = None  # Plaintext email (encrypted before storage)
+
+
+class CEBrokerEmailOut(BaseModel):
+    """CE Broker email settings response — email is masked for security."""
+    has_cebroker_email: bool
+    cebroker_email_masked: Optional[str] = None  # e.g. "r***@gmail.com"
+    encryption_enabled: bool
+
+
 class CEBrokerSyncLogOut(BaseModel):
     id: int
     ceu_id: int
@@ -1734,9 +1792,21 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     Each CEU submission is wrapped in its own try/catch — failure of one
     doesn't block the rest. Random 2-5 second delays between submissions
     for human-like behavior.
+
+    Requires BREATHE_ENCRYPTION_KEY environment variable to be set for
+    credential encryption. If not configured, sync is gracefully disabled.
     """
     from cebroker_sync import sync_ceus_to_cebroker, create_sync_log, update_sync_log
-    from models import CEBrokerSyncLog
+    from crypto import is_encryption_available, decrypt_field
+    from models import CEBrokerSyncLog  # noqa: F401  (used by create_sync_log/update_sync_log)
+
+    # ─── Encryption key check ───────────────────────────────────
+    if not is_encryption_available():
+        return CEBrokerSyncResult(
+            synced=0, failed=0, errors=[], details=[],
+            message=("CE Broker sync disabled: BREATHE_ENCRYPTION_KEY environment variable "
+                     "is not set. Configure it to enable CE Broker sync.")
+        )
 
     # Get all CEUs for this user that haven't been synced to CE Broker yet
     ceus = db.query(CEU).filter(
@@ -1749,6 +1819,20 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
             synced=0, failed=0, errors=[], details=[],
             message="No CEUs to sync — all CEUs are already reported to CE Broker."
         )
+
+    # ─── Resolve CE Broker login email ──────────────────────────
+    # Use encrypted CE Broker email if set, otherwise fall back to user's Breathe email
+    cebroker_email = None
+    if current_user.cebroker_email_encrypted:
+        cebroker_email = decrypt_field(current_user.cebroker_email_encrypted)
+        if not cebroker_email:
+            return CEBrokerSyncResult(
+                synced=0, failed=0, errors=[], details=[],
+                message=("CE Broker sync disabled: could not decrypt CE Broker email. "
+                         "Check that BREATHE_ENCRYPTION_KEY matches the key used to encrypt it.")
+            )
+    if not cebroker_email:
+        cebroker_email = current_user.email  # Fall back to Breathe account email
 
     # Create sync log entries (status=pending) for each CEU
     sync_log_map = {}  # ceu_id -> log_id
@@ -1769,7 +1853,7 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     ]
 
     # Run the sync agent (Playwright browser automation via Node subprocess)
-    results = sync_ceus_to_cebroker(current_user.email, ceus_to_sync, headless=True)
+    results = sync_ceus_to_cebroker(cebroker_email, ceus_to_sync, headless=True)
 
     # Process results: only mark synced=True for CONFIRMED successes
     # "submitted" status means it was submitted but no confirmation detected — don't mark as synced
@@ -1807,6 +1891,96 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
         errors=results.get("errors", []),
         details=results.get("details", []),
     )
+
+
+# ─── CE Broker Email Settings (Encrypted) ─────────────────────
+
+@app.put("/api/cebroker/email", tags=["CE Broker Sync"])
+def set_cebroker_email(
+    payload: CEBrokerEmailSettings,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Set the CE Broker login email for the authenticated user.
+
+    The email is encrypted using Fernet (via crypto.py) before being stored
+    in the database. Requires BREATHE_ENCRYPTION_KEY environment variable.
+    """
+    from crypto import is_encryption_available, encrypt_field
+
+    if not is_encryption_available():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "encryption_not_configured",
+                "message": ("BREATHE_ENCRYPTION_KEY environment variable is not set. "
+                            "Configure it to enable CE Broker credential storage."),
+            },
+        )
+
+    email = (payload.cebroker_email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+
+    encrypted = encrypt_field(email)
+    if not encrypted:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to encrypt CE Broker email. Check BREATHE_ENCRYPTION_KEY.",
+        )
+
+    current_user.cebroker_email_encrypted = encrypted
+    db.commit()
+
+    # Return masked email for confirmation
+    parts = email.split("@")
+    masked = f"{parts[0][:1]}***@{parts[1]}" if len(parts) == 2 else "***"
+
+    return {
+        "success": True,
+        "message": "CE Broker email saved (encrypted)",
+        "cebroker_email_masked": masked,
+    }
+
+
+@app.get("/api/cebroker/email", response_model=CEBrokerEmailOut, tags=["CE Broker Sync"])
+def get_cebroker_email_settings(
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Get CE Broker email settings for the authenticated user.
+
+    Returns a masked email for security — the full email is never returned
+    via API. CE Broker sync uses the encrypted email internally.
+    """
+    from crypto import is_encryption_available, decrypt_field
+
+    encryption_enabled = is_encryption_available()
+    has_email = bool(current_user.cebroker_email_encrypted)
+    masked = None
+
+    if has_email and encryption_enabled:
+        email = decrypt_field(current_user.cebroker_email_encrypted)
+        if email:
+            parts = email.split("@")
+            masked = f"{parts[0][:1]}***@{parts[1]}" if len(parts) == 2 else "***"
+
+    return CEBrokerEmailOut(
+        has_cebroker_email=has_email,
+        cebroker_email_masked=masked,
+        encryption_enabled=encryption_enabled,
+    )
+
+
+@app.delete("/api/cebroker/email", tags=["CE Broker Sync"])
+def delete_cebroker_email(
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Remove the stored CE Broker login email for the authenticated user."""
+    current_user.cebroker_email_encrypted = None
+    db.commit()
+    return {"success": True, "message": "CE Broker email removed"}
 
 
 @app.get("/api/cebroker/status", tags=["CE Broker Sync"])
@@ -1917,6 +2091,24 @@ def waitlist_count():
     count = c.execute("SELECT COUNT(*) FROM waitlist").fetchone()[0]
     conn.close()
     return {"count": count}
+
+
+@app.post("/api/admin/cleanup-temp", tags=["Admin"])
+def cleanup_temp_files():
+    """Cron-friendly endpoint to delete stale temp certificate files.
+
+    Scans /tmp/breathe/certificates/ and removes any files older than 1 hour.
+    This is a backstop — process_certificate() already deletes files via try/finally,
+    but crashes or killed processes can leave orphaned files containing PII.
+
+    Can be called via cron, curl, or any scheduler. No auth required since it
+    only deletes temp files (no user data, no DB access).
+    """
+    from ocr import cleanup_old_temp_files
+    result = cleanup_old_temp_files()
+    logger.info("Temp cleanup: deleted %d files, %d dirs, %d errors",
+                result["deleted_files"], result["deleted_dirs"], result["errors"])
+    return {"status": "ok", **result}
 
 
 if __name__ == "__main__":

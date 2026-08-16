@@ -19,7 +19,10 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_HOURS = 24 * 30  # 30 days
+# 7-day token lifetime — limits exposure window if a token is leaked or stolen.
+# Shorter expiry reduces risk of credential replay attacks and aligns with
+# OWASP best practices for JWT session management.
+JWT_EXPIRE_HOURS = 24 * 7  # 7 days
 
 
 # ─── Password hashing (bcrypt directly) ────────────────────────
