@@ -129,12 +129,16 @@ export default function OnboardingPage() {
     setError(null);
     setSaving(true);
     try {
+      // Determine state — use dropdown value, or derive from stateCode
+      const finalState = state || (stateCode === "TX" ? "Texas" : "");
+      const finalStateCode = stateNameToCode[finalState] || stateCode || "TX";
+      
       // Save state license
-      if (user && state && licenseType) {
+      if (user && finalState && licenseType) {
         await apiFetch("/api/licenses", {
           method: "POST",
           body: JSON.stringify({
-            state: stateCode,
+            state: finalStateCode,
             license_type: licenseType,
             license_number: licenseNumber || "PENDING",
             expiry_date: expiryDate || "2027-03-31",
@@ -142,6 +146,8 @@ export default function OnboardingPage() {
             required_ceus: 24,
           }),
         });
+      } else {
+        console.error("Missing onboarding data:", { finalState, licenseType, licenseNumber });
       }
 
       // Save NBRC credential (if user entered it)
@@ -160,7 +166,11 @@ export default function OnboardingPage() {
 
       // Mark onboarding as complete
       try {
-        await apiFetch("/api/user/onboarding-complete", { method: "POST" });
+        const freshUser = await apiFetch<any>("/api/user/onboarding-complete", { method: "POST" });
+        // Update localStorage so auth gate doesn't bounce back
+        if (freshUser) {
+          localStorage.setItem("breathe_user", JSON.stringify(freshUser));
+        }
       } catch (e) {
         console.error("Failed to mark onboarding complete:", e);
       }
@@ -246,10 +256,16 @@ export default function OnboardingPage() {
                   state={stateCode}
                   onSelect={(result: LicenseLookupResult) => {
                     setLicenseNumber(result.license_number);
+                    // Always set licenseType from lookup result
                     if (result.license_type === "RCP") {
-                      setLicenseType(licenseType === "RRT" ? "RRT" : "CRT");
-                      // Also auto-set NBRC type to match
-                      setNbrcType(licenseType === "RRT" ? "RRT" : "CRT");
+                      setLicenseType("RRT");
+                      setNbrcType("RRT");
+                    } else {
+                      setLicenseType(result.license_type || "RRT");
+                    }
+                    // CRITICAL: set state from the current stateCode if not already set
+                    if (!state) {
+                      setState(stateCode === "TX" ? "Texas" : stateCode);
                     }
                     if (result.expiry_date) {
                       setExpiryDate(result.expiry_date);

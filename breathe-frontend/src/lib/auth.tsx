@@ -44,6 +44,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (stored && storedUser) {
       setToken(stored);
       setUser(JSON.parse(storedUser));
+      // Fetch fresh user data to catch onboarding_completed changes
+      fetch("/api/me", {
+        headers: { Authorization: `Bearer ${stored}` },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((freshUser) => {
+          if (freshUser) {
+            setUser(freshUser);
+            localStorage.setItem("breathe_user", JSON.stringify(freshUser));
+          }
+        })
+        .catch(() => {});
     }
     setLoading(false);
   }, []);

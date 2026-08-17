@@ -269,6 +269,17 @@ async def ceu_email_webhook(
             message=f"No user found for email alias: {to_email}",
         )
 
+    # AARC-ONLY FILTER — only accept emails from AARC domains
+    from_domain = from_email.split("@")[-1].lower() if "@" in from_email else ""
+    AARC_DOMAINS = {"aarc.org", "aarc.com", "learning.aarc.org", "learnaarc.org", "rc.jchs.edu"}
+    if from_domain not in AARC_DOMAINS:
+        logger.info(f"Email import rejected — sender {from_email} not an AARC domain")
+        return CEUEmailResult(
+            success=False,
+            message=f"Email import is currently limited to AARC emails. Sender domain '{from_domain}' is not recognized as AARC.",
+            user_id=user.id,
+        )
+
     # Pro tier check — email forwarding is a Pro feature
     if user.subscription_tier not in ("pro", "department"):
         logger.info(f"User {user.id} on '{user.subscription_tier}' tier — email forwarding requires Pro")

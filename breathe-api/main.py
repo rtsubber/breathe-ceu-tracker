@@ -297,7 +297,7 @@ class OCRResult(BaseModel):
 PRO_FEATURES = {
     "ocr", "email_forwarding", "aarc_import", "browser_extension",
     "push_notifications", "nbrc_tracking", "multi_state", "sms_reminders",
-    "free_course_alerts",
+    "free_course_alerts", "email_alerts",
 }
 
 
@@ -1335,6 +1335,242 @@ def send_sms_reminder(payload: SMSReminderRequest, current_user: User = Depends(
         raise HTTPException(status_code=503, detail="twilio package not installed. Run: pip install twilio")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"SMS send failed: {str(e)}")
+
+
+# ─── Email Alert Endpoint (Pro feature) ────────────────────────
+
+@app.post("/api/email-alert", tags=["Email"])
+def send_email_alert(payload: dict, current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
+    """Send email alert (Pro only). Uses Resend API."""
+    user = current_user
+    require_pro(user, "email_alerts")
+
+    alert_type = payload.get("alert_type", "deadline_approaching")
+    recipient = payload.get("email", user.email)
+    license_state = payload.get("license_state", "")
+    license_expiry = payload.get("license_expiry", "")
+    ceus_completed = payload.get("ceus_completed", 0)
+    ceus_required = payload.get("ceus_required", 0)
+    ceus_remaining = ceus_required - ceus_completed
+
+    # Build email content based on alert type
+    if alert_type == "renewal_warning":
+        subject = f"⏰ Breathe Alert: Your {license_state} RT license expires {license_expiry}"
+        html_body = f"""
+        <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto;">
+            <h2 style="color: #003e54;">⏰ License Renewal Warning</h2>
+            <p>Hi {user.name},</p>
+            <p>Your <strong>{license_state} RT license</strong> expires on <strong>{license_expiry}</strong>.</p>
+            <p>Here's your CEU progress:</p>
+            <table style="border-collapse: collapse; margin: 16px 0;">
+                <tr><td style="padding: 8px 16px; background: #f0f0f0;">Completed</td><td style="padding: 8px 16px;">{ceus_completed} CEUs</td></tr>
+                <tr><td style="padding: 8px 16px; background: #f0f0f0;">Required</td><td style="padding: 8px 16px;">{ceus_required} CEUs</td></tr>
+                <tr><td style="padding: 8px 16px; background: #fff3cd; font-weight: bold;">Remaining</td><td style="padding: 8px 16px; font-weight: bold; color: {'#dc3545' if ceus_remaining > 0 else '#28a745'};">{ceus_remaining} CEUs</td></tr>
+            </table>
+            <p>{'You still need ' + str(ceus_remaining) + ' more CEUs before renewal. Do not wait!' if ceus_remaining > 0 else 'You have met your CEU requirement. You are ready to renew!'}</p>
+            <p><a href="https://breathe.sublettlabs.com" style="display: inline-block; padding: 12px 24px; background: #003e54; color: white; text-decoration: none; border-radius: 6px;">View Your Progress</a></p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+            <p style="color: #999; font-size: 12px;">Breathe — CEU Tracker for Respiratory Therapists<br>breathe.sublettlabs.com</p>
+        </div>
+        """
+        text_body = f"Hi {user.name},\n\nYour {license_state} RT license expires on {license_expiry}.\n\nCEU Progress:\n- Completed: {ceus_completed}\n- Required: {ceus_required}\n- Remaining: {ceus_remaining}\n\n{'You still need ' + str(ceus_remaining) + ' more CEUs. Do not wait!' if ceus_remaining > 0 else 'You have met your CEU requirement. Ready to renew!'}\n\nView your progress: https://breathe.sublettlabs.com\n\nBreathe — CEU Tracker for Respiratory Therapists"
+
+    elif alert_type == "deadline_approaching":
+        subject = f"📢 Breathe: CEU deadline approaching for {license_state}"
+        html_body = f"""
+        <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto;">
+            <h2 style="color: #003e54;">📢 CEU Deadline Approaching</h2>
+            <p>Hi {user.name},</p>
+            <p>Your CEU deadline for <strong>{license_state}</strong> is approaching. Your license expires <strong>{license_expiry}</strong>.</p>
+            <p>You have <strong>{ceus_remaining} CEUs</strong> remaining to complete.</p>
+            <p>Log in to Breathe to track your progress and find free CEU courses.</p>
+            <p><a href="https://breathe.sublettlabs.com" style="display: inline-block; padding: 12px 24px; background: #003e54; color: white; text-decoration: none; border-radius: 6px;">Check Your Progress</a></p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+            <p style="color: #999; font-size: 12px;">Breathe — CEU Tracker for Respiratory Therapists<br>breathe.sublettlabs.com</p>
+        </div>
+        """
+        text_body = f"Hi {user.name},\n\nYour CEU deadline for {license_state} is approaching. License expires {license_expiry}.\n\nYou have {ceus_remaining} CEUs remaining.\n\nCheck your progress: https://breathe.sublettlabs.com\n\nBreathe — CEU Tracker for Respiratory Therapists"
+
+    elif alert_type == "free_course":
+        course_title = payload.get("course_title", "")
+        course_provider = payload.get("course_provider", "")
+        course_credits = payload.get("course_credits", "")
+        course_url = payload.get("course_url", "https://breathe.sublettlabs.com")
+        subject = f"🎓 Breathe: New free CEU course available!"
+        html_body = f"""
+        <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto;">
+            <h2 style="color: #003e54;">🎓 Free CEU Course Found!</h2>
+            <p>Hi {user.name},</p>
+            <p>A new free CEU course is available:</p>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                <p style="margin: 0 0 8px; font-weight: bold; font-size: 16px;">{course_title}</p>
+                <p style="margin: 0 0 4px; color: #666;">Provider: {course_provider}</p>
+                <p style="margin: 0; color: #666;">Credits: {course_credits}</p>
+            </div>
+            <p><a href="{course_url}" style="display: inline-block; padding: 12px 24px; background: #003e54; color: white; text-decoration: none; border-radius: 6px;">View Course</a></p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+            <p style="color: #999; font-size: 12px;">Breathe — CEU Tracker for Respiratory Therapists<br>breathe.sublettlabs.com</p>
+        </div>
+        """
+        text_body = f"Hi {user.name},\n\nFree CEU course available:\n\n{course_title}\nProvider: {course_provider}\nCredits: {course_credits}\n\nView course: {course_url}\n\nBreathe — CEU Tracker for Respiratory Therapists"
+
+    else:
+        subject = f"Breathe Alert: {alert_type}"
+        html_body = f"<p>Hi {user.name},</p><p>You have a Breathe alert: {alert_type}</p><p><a href=\"https://breathe.sublettlabs.com\">View your dashboard</a></p>"
+        text_body = f"Hi {user.name},\n\nBreathe alert: {alert_type}\n\nhttps://breathe.sublettlabs.com"
+
+    # Send via Resend API
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if not resend_api_key:
+        raise HTTPException(status_code=503, detail={
+            "error": "email_not_configured",
+            "message": "Resend API key not set. Set RESEND_API_KEY environment variable."
+        })
+
+    try:
+        import requests as req
+        resp = req.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": "Breathe <alerts@breathe.sublettlabs.com>",
+                "to": [recipient],
+                "subject": subject,
+                "html": html_body,
+                "text": text_body,
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return {"success": True, "message_id": resp.json().get("id", ""), "alert_type": alert_type, "sent_to": recipient}
+        else:
+            raise HTTPException(status_code=502, detail=f"Email send failed: {resp.text[:200]}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Email send failed: {str(e)}")
+
+
+@app.post("/api/admin/send-deadline-alerts", tags=["Admin"])
+def send_deadline_alerts_cron(api_key: str = Query(None)):
+    """Cron-friendly endpoint: check all users for upcoming license deadlines and send email alerts.
+
+    Sends alerts at: 90 days, 60 days, 30 days, 14 days, and 7 days before expiry.
+    Only sends to Pro users with email_alerts feature access.
+    Skips users who already received an alert for the same deadline window.
+
+    Call via cron: curl -s 'http://localhost:8000/api/admin/send-deadline-alerts?api_key=...'
+    """
+    ADMIN_KEY = os.environ.get("BREATHE_ADMIN_KEY", "")
+    if ADMIN_KEY and api_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    from datetime import date, timedelta
+    import sqlite3 as sq
+
+    conn = sq.connect(DB_PATH)
+    conn.row_factory = sq.Row
+    today = date.today()
+    alert_windows = [90, 60, 30, 14, 7]
+    alerts_sent = 0
+    errors = 0
+
+    # Get all Pro users with active licenses
+    users = conn.execute("""
+        SELECT u.id, u.name, u.email, u.subscription_tier,
+               l.id as license_id, l.state, l.expiry_date, l.required_ceus, l.license_type
+        FROM users u
+        JOIN licenses l ON u.id = l.user_id
+        WHERE u.subscription_tier IN ('pro', 'department')
+          AND u.subscription_status = 'active'
+    """).fetchall()
+
+    for u in users:
+        expiry = date.fromisoformat(u["expiry_date"])
+        days_until = (expiry - today).days
+
+        # Check if we're in an alert window
+        if days_until not in alert_windows:
+            continue
+
+        # Count completed CEUs for this license's cycle
+        cycle_start = expiry - timedelta(days=365 * 2)  # approximate cycle
+        ceus = conn.execute("""
+            SELECT SUM(credits) as total FROM ceus
+            WHERE user_id = ? AND completion_date >= ? AND completion_date <= ?
+        """, (u["id"], cycle_start.isoformat(), expiry.isoformat())).fetchone()
+        ceus_completed = int(ceus["total"] or 0)
+        ceus_required = u["required_ceus"] or 30
+        ceus_remaining = max(0, ceus_required - ceus_completed)
+
+        alert_type = "renewal_warning" if days_until <= 30 else "deadline_approaching"
+
+        try:
+            # Call the email alert logic directly
+            resend_api_key = os.environ.get("RESEND_API_KEY")
+            if not resend_api_key:
+                errors += 1
+                continue
+
+            if days_until <= 30:
+                subject = f"⏰ Breathe: Your {u['state']} RT license expires in {days_until} days"
+            else:
+                subject = f"📢 Breathe: CEU deadline approaching for {u['state']} ({days_until} days)"
+
+            html_body = f"""
+            <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto;">
+                <h2 style="color: #003e54;">{"⏰ License Renewal Warning" if days_until <= 30 else "📢 CEU Deadline Approaching"}</h2>
+                <p>Hi {u["name"]},</p>
+                <p>Your <strong>{u["state"]} {u["license_type"]} license</strong> expires on <strong>{u["expiry_date"]}</strong> — that's <strong>{days_until} days</strong> from now.</p>
+                <table style="border-collapse: collapse; margin: 16px 0;">
+                    <tr><td style="padding: 8px 16px; background: #f0f0f0;">Completed</td><td style="padding: 8px 16px;">{ceus_completed} CEUs</td></tr>
+                    <tr><td style="padding: 8px 16px; background: #f0f0f0;">Required</td><td style="padding: 8px 16px;">{ceus_required} CEUs</td></tr>
+                    <tr><td style="padding: 8px 16px; background: {'#fff3cd' if ceus_remaining > 0 else '#d4edda'}; font-weight: bold;">Remaining</td><td style="padding: 8px 16px; font-weight: bold; color: {'#dc3545' if ceus_remaining > 0 else '#28a745'};">{ceus_remaining} CEUs</td></tr>
+                </table>
+                <p>{f"You still need <strong>{ceus_remaining} CEUs</strong> before renewal. Do not wait!" if ceus_remaining > 0 else "You have met your CEU requirement. You are ready to renew!"}</p>
+                <p><a href="https://breathe.sublettlabs.com" style="display: inline-block; padding: 12px 24px; background: #003e54; color: white; text-decoration: none; border-radius: 6px;">View Your Progress</a></p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+                <p style="color: #999; font-size: 12px;">Breathe — CEU Tracker for Respiratory Therapists<br>breathe.sublettlabs.com</p>
+            </div>
+            """
+            text_body = f"Hi {u['name']},\n\nYour {u['state']} {u['license_type']} license expires {u['expiry_date']} ({days_until} days).\n\nCEU Progress:\n- Completed: {ceus_completed}\n- Required: {ceus_required}\n- Remaining: {ceus_remaining}\n\n{'You still need ' + str(ceus_remaining) + ' more CEUs. Do not wait!' if ceus_remaining > 0 else 'You have met your CEU requirement. Ready to renew!'}\n\nhttps://breathe.sublettlabs.com\n\nBreathe — CEU Tracker for Respiratory Therapists"
+
+            import requests as req
+            resp = req.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": "Breathe <alerts@breathe.sublettlabs.com>",
+                    "to": [u["email"]],
+                    "subject": subject,
+                    "html": html_body,
+                    "text": text_body,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                alerts_sent += 1
+                logger.info("Breathe alert sent to %s (%s, %d days, %d CEUs remaining)",
+                            u["email"], u["state"], days_until, ceus_remaining)
+            else:
+                errors += 1
+                logger.error("Breathe alert failed for %s: %s", u["email"], resp.text[:200])
+        except Exception as e:
+            errors += 1
+            logger.error("Breathe alert error for %s: %s", u["email"], str(e))
+
+    conn.close()
+    return {
+        "status": "ok",
+        "alerts_sent": alerts_sent,
+        "errors": errors,
+        "users_checked": len(users),
+        "date": today.isoformat(),
+    }
 
 
 # ─── Free CEU Course Alerts Endpoints (Pro feature) ────────────

@@ -65,15 +65,37 @@ export default {
     };
 
     const webhookUrl = env.BREATHE_WEBHOOK_URL || "https://breathe.sublettlabs.com/api/email/ceu-webhook";
+    const webhookSecret = env.BREATHE_WEBHOOK_SECRET || "";
+
+    // Build JSON body
+    const bodyStr = JSON.stringify(payload);
+
+    // HMAC-SHA256 signature (simple resend-signature format)
+    let signature = "";
+    if (webhookSecret) {
+      const enc = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw", enc.encode(webhookSecret),
+        { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+      );
+      const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(bodyStr));
+      const hashArray = Array.from(new Uint8Array(sigBuf));
+      signature = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    }
 
     try {
+      const headers = {
+        "Content-Type": "application/json",
+        "X-Email-Source": "cloudflare-email-worker",
+      };
+      if (signature) {
+        headers["resend-signature"] = signature;
+      }
+
       const response = await fetch(webhookUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Email-Source": "cloudflare-email-worker",
-        },
-        body: JSON.stringify(payload),
+        headers,
+        body: bodyStr,
       });
 
       const result = await response.json();
