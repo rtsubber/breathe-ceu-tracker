@@ -108,7 +108,9 @@ export default function OnboardingPage() {
     "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
     "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
   };
-  const stateCode = stateNameToCode[state] || "TX";
+  // Do NOT default to TX — if no state is selected, stateCode is empty.
+  // The TX default caused non-TX users to silently get Texas license data.
+  const stateCode = stateNameToCode[state] || "";
 
   const steps = [
     {
@@ -164,22 +166,29 @@ export default function OnboardingPage() {
         });
       }
 
-      // Mark onboarding as complete
-      try {
-        const freshUser = await apiFetch<any>("/api/user/onboarding-complete", { method: "POST" });
-        // Update localStorage so auth gate doesn't bounce back
-        if (freshUser) {
-          localStorage.setItem("breathe_user", JSON.stringify(freshUser));
-        }
-      } catch (e) {
-        console.error("Failed to mark onboarding complete:", e);
+      // Mark onboarding as complete — MUST succeed before navigating
+      // This is the critical step: if this fails, AuthGate will loop the user
+      // back to /onboarding forever because onboarding_completed stays false.
+      const freshUser = await apiFetch<any>("/api/user/onboarding-complete", { method: "POST" });
+      
+      // Update localStorage AND wait for it to be written before navigating.
+      // AuthGate reads user.onboarding_completed from localStorage on route change —
+      // if it's not updated before router.push, AuthGate bounces back to /onboarding.
+      if (freshUser) {
+        localStorage.setItem("breathe_user", JSON.stringify(freshUser));
       }
 
+      // Small delay to let React context sync before AuthGuard's useEffect fires
+      // on the /dashboard route. Without this, the race condition between
+      // context update and route change can cause AuthGate to read stale user data.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       router.push("/dashboard");
     } catch (err) {
-      // Even if save fails, go to dashboard
+      // If onboarding-complete fails, do NOT push to dashboard —
+      // AuthGate would bounce the user back to /onboarding, creating a loop.
       console.error("Onboarding save failed:", err);
-      router.push("/dashboard");
+      setError("Failed to save your onboarding data. Please try again.");
     } finally {
       setSaving(false);
     }

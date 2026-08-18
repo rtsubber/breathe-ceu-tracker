@@ -36,7 +36,18 @@ function AuthGuard({ children }: { children: ReactNode }) {
 
       // Logged in but hasn't finished onboarding → force to /onboarding
       // (unless they're already there or on a public non-auth page like landing/pricing)
-      if (needsOnboarding && pathname !== "/onboarding" && !PUBLIC_ROUTES.has(pathname)) {
+      //
+      // IMPORTANT: Skip the onboarding redirect if we just came FROM /onboarding.
+      // When handleFinish() calls router.push("/dashboard"), the AuthGuard fires
+      // before the auth context has synced the updated user object. This creates
+      // a race condition where AuthGate sees stale onboarding_completed=false,
+      // bounces the user back to /onboarding, and creates an infinite loop.
+      // The 100ms delay in handleFinish + this check breaks the loop.
+      const cameFromOnboarding = typeof document !== "undefined" &&
+        document.referrer && document.referrer.includes("/onboarding");
+      const isDashboardAfterOnboarding = pathname === "/dashboard" && cameFromOnboarding;
+
+      if (needsOnboarding && pathname !== "/onboarding" && !PUBLIC_ROUTES.has(pathname) && !isDashboardAfterOnboarding) {
         router.replace("/onboarding");
         return;
       }
