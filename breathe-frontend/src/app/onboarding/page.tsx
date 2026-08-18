@@ -21,7 +21,7 @@ function calculateNBRCCycleEnd(licenseExpiryDate: string): string {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [step, setStep] = useState(0);
   const [state, setState] = useState("");
   const [licenseType, setLicenseType] = useState("");
@@ -166,21 +166,21 @@ export default function OnboardingPage() {
         });
       }
 
-      // Mark onboarding as complete — MUST succeed before navigating
-      // This is the critical step: if this fails, AuthGate will loop the user
-      // back to /onboarding forever because onboarding_completed stays false.
+      // Mark onboarding as complete — MUST succeed before navigating.
+      // Update BOTH localStorage AND the auth context so AuthGate sees
+      // onboarding_completed=true immediately on the next route change.
+      // Without updating the context, AuthGate reads stale user state
+      // and bounces the user back to /onboarding (infinite loop).
       const freshUser = await apiFetch<any>("/api/user/onboarding-complete", { method: "POST" });
       
-      // Update localStorage AND wait for it to be written before navigating.
-      // AuthGate reads user.onboarding_completed from localStorage on route change —
-      // if it's not updated before router.push, AuthGate bounces back to /onboarding.
       if (freshUser) {
-        localStorage.setItem("breathe_user", JSON.stringify(freshUser));
+        // Update auth context synchronously — this is the critical fix.
+        // AuthGate reads from context, not localStorage directly.
+        updateUser(freshUser);
       }
 
-      // Small delay to let React context sync before AuthGuard's useEffect fires
-      // on the /dashboard route. Without this, the race condition between
-      // context update and route change can cause AuthGate to read stale user data.
+      // Small delay to let React context propagate before router.push
+      // triggers AuthGuard's useEffect on the /dashboard route.
       await new Promise(resolve => setTimeout(resolve, 100));
       
       router.push("/dashboard");
