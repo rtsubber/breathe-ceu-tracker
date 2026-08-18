@@ -58,30 +58,51 @@ export default function OnboardingPage() {
     if (user?.email) setNbrcEmail(user.email);
   }, [user?.email]);
 
-  const handleNbrcScrape = async () => {
+ const handleNbrcScrape = async () => {
     setNbrcScrapeError(null);
     setNbrcScrapeSuccess(false);
     setNbrcScraping(true);
     try {
-      const result = await apiFetch<any>("/api/nbrc/scrape", {
+      // Start async scrape job (avoids 30s proxy timeout)
+      const startResp = await apiFetch<{ job_id: string; status: string }>("/api/nbrc/scrape-async", {
         method: "POST",
         body: JSON.stringify({ email: nbrcEmail, password: nbrcPassword }),
       });
-      if (result.success) {
-        setNbrcScrapeSuccess(true);
-        // Auto-fill credential type from scraped data
-        if (result.credentials?.length > 0) {
-          const highest = result.credentials.find((c: any) => c.type === "RRT") || result.credentials[0];
-          setNbrcType(highest.type);
-        }
-        // Auto-fill cycle end from scraped data
-        if (result.credentials?.length > 0) {
-          const expires = result.credentials[0].expires; // MM/DD/YYYY
-          const parts = expires.split("/");
-          if (parts.length === 3) {
-            setNbrcCycleEnd(`${parts[2]}-${parts[0]}-${parts[1]}`);
+
+      // Poll for results every 3 seconds until done or error
+      const jobId = startResp.job_id;
+      let pollCount = 0;
+      const maxPolls = 40; // 40 polls × 3s = 120s max
+      while (pollCount < maxPolls) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const status = await apiFetch<{ status: string; result: any; error: string | null }>(
+          `/api/nbrc/scrape-status/${jobId}`,
+        );
+        if (status.status === "done") {
+          setNbrcScrapeSuccess(true);
+          const result = status.result;
+          // Auto-fill credential type from scraped data
+          if (result.credentials?.length > 0) {
+            const highest = result.credentials.find((c: any) => c.type === "RRT") || result.credentials[0];
+            setNbrcType(highest.type);
           }
+          // Auto-fill cycle end from scraped data
+          if (result.credentials?.length > 0) {
+            const expires = result.credentials[0].expires; // MM/DD/YYYY
+            const parts = expires.split("/");
+            if (parts.length === 3) {
+              setNbrcCycleEnd(`${parts[2]}-${parts[0]}-${parts[1]}`);
+            }
+          }
+          break;
+        } else if (status.status === "error") {
+          throw new Error(status.error || "Failed to pull NBRC data");
         }
+        // status === "pending" → keep polling
+        pollCount++;
+      }
+      if (pollCount >= maxPolls) {
+        throw new Error("NBRC lookup timed out. Please try again or enter manually.");
       }
     } catch (err) {
       setNbrcScrapeError(err instanceof Error ? err.message : "Failed to pull NBRC data");
@@ -449,12 +470,45 @@ export default function OnboardingPage() {
                 >
                   {nbrcScraping ? (
                     <>
-                      <Loader2 size={16} className="mr-1 animate-spin" /> Pulling from NBRC...
+                      <Loader2 size={16} className="mr-1 animate-spin" /> Pulling from NBRC... (can take 30-40s)
                     </>
                   ) : (
                     "Pull My NBRC Data"
                   )}
                 </Button>
+
+                {/* Feature showcase while scraping — keeps user engaged instead of staring at a spinner */}
+                {nbrcScraping && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-button p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: "60%" }} />
+                      </div>
+                      <span className="text-xs text-blue-600 font-medium">Syncing...</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <CheckCircle2 size={12} className="text-green-500" />
+                        Verifying your NBRC credentials
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <CheckCircle2 size={12} className="text-green-500" />
+                        Pulling your 5-year CMP cycle dates
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <CheckCircle2 size={12} className={nbrcScraping ? "text-blue-400 animate-pulse" : "text-green-500"} />
+                        Checking assessment scores & CE requirements
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-text-secondary">
+                        <BadgeCheck size={12} className="text-blue-400" />
+                        Syncing everything to your Breathe dashboard
+                      </div>
+                    </div>
+                    <p className="text-xs text-text-secondary pt-1 border-t border-blue-100">
+                      💡 Breathe auto-tracks your NBRC CMP cycle so you never miss a deadline. Your state license and NBRC credentials stay in sync — one dashboard, no spreadsheets.
+                    </p>
+                  </div>
+                )}
                 {nbrcScrapeError && (
                   <div className="flex items-center gap-2 bg-danger/10 text-danger rounded-button px-3 py-2 text-xs">
                     <AlertTriangle size={14} />

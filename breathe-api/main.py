@@ -1859,6 +1859,11 @@ def scrape_nbrc_endpoint(payload: dict, current_user: User = Depends(get_current
     """Log into NBRC portal and pull real CMP data (credentials, cycle, assessments, CE hours).
     
     This is a Pro feature — keeps NBRC tracking up to date automatically.
+    
+    Runs synchronously. The NBRC portal takes ~30-40 seconds to scrape.
+    If the proxy (Next.js rewrites / Cloudflare Tunnel) times out before
+    the scrape finishes, the frontend gets a 500. The frontend should use
+    the async version (/api/nbrc/scrape-async) to avoid timeout issues.
     """
     require_pro(current_user, "nbrc_sync")
     
@@ -1874,7 +1879,45 @@ def scrape_nbrc_endpoint(payload: dict, current_user: User = Depends(get_current
         logger.error("NBRC scrape failed: %s", result.get("error", "unknown"))
         raise HTTPException(status_code=400, detail="NBRC lookup failed. Please try again or enter your credentials manually.")
     
-    # Save credentials to DB
+    _save_nbrc_scrape_result(result, current_user, db)
+    return result
+
+
+# ─── Async NBRC Scrape (avoids 30s proxy timeout) ─────────────
+
+import threading
+
+# In-memory store for async scrape jobs: {job_id: {status, result, error, user_id} }
+_nbrc_scrape_jobs: dict = {}
+_NBRC_JOB_TTL = 300  # 5 minutes
+
+
+def _run_nbrc_scrape_async(job_id: str, email: str, password: str, user_id: int):
+    """Background worker that runs the NBRC scrape and stores the result."""
+    try:
+        from nbrc_scraper import scrape_nbrc_portal
+        result = scrape_nbrc_portal(email, password)
+        
+        if result.get("success"):
+            # Save to DB in a new session (background thread can't share the request session)
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    _save_nbrc_scrape_result(result, user, db)
+            finally:
+                db.close()
+            
+            _nbrc_scrape_jobs[job_id] = {"status": "done", "result": result, "error": None, "ts": time.time()}
+        else:
+            _nbrc_scrape_jobs[job_id] = {"status": "error", "result": None, "error": result.get("error", "Scrape failed"), "ts": time.time()}
+    except Exception as e:
+        logger.error("Async NBRC scrape failed: %s", e)
+        _nbrc_scrape_jobs[job_id] = {"status": "error", "result": None, "error": str(e), "ts": time.time()}
+
+
+def _save_nbrc_scrape_result(result, current_user, db):
+    """Save NBRC scrape results to the database. Shared between sync and async endpoints."""
     from datetime import date as date_type
     from models import NBRCCredential, NBRCAssessment
     
@@ -1919,8 +1962,52 @@ def scrape_nbrc_endpoint(payload: dict, current_user: User = Depends(get_current
         db.add(nbrc_assess)
     
     db.commit()
+
+
+@app.post("/api/nbrc/scrape-async", tags=["NBRC"])
+def scrape_nbrc_async(payload: dict, current_user: User = Depends(get_current_user)):
+    """Start an async NBRC scrape job. Returns a job_id immediately.
     
-    return result
+    The NBRC portal takes ~30-40 seconds to scrape, which exceeds the
+    30-second proxy timeout (Next.js rewrites + Cloudflare Tunnel). This
+    endpoint starts the scrape in a background thread and returns a 202
+    with a job_id. The frontend polls GET /api/nbrc/scrape-status/{job_id}
+    until the job is done.
+    """
+    require_pro(current_user, "nbrc_sync")
+    
+    email = payload.get("email")
+    password = payload.get("password")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+    
+    job_id = str(uuid.uuid4())
+    _nbrc_scrape_jobs[job_id] = {"status": "pending", "result": None, "error": None, "ts": time.time()}
+    
+    thread = threading.Thread(
+        target=_run_nbrc_scrape_async,
+        args=(job_id, email, password, current_user.id),
+        daemon=True,
+    )
+    thread.start()
+    
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/nbrc/scrape-status/{job_id}", tags=["NBRC"])
+def scrape_nbrc_status(job_id: str, current_user: User = Depends(get_current_user)):
+    """Poll for the status of an async NBRC scrape job."""
+    # Clean up old jobs
+    now = time.time()
+    expired = [k for k, v in _nbrc_scrape_jobs.items() if now - v.get("ts", 0) > _NBRC_JOB_TTL]
+    for k in expired:
+        del _nbrc_scrape_jobs[k]
+    
+    job = _nbrc_scrape_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    
+    return job
 
 @app.post("/api/nbrc/credentials", response_model=NBRCCredentialOut, tags=["NBRC"])
 def add_nbrc_credential(payload: NBRCCredentialCreate, current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
