@@ -20,7 +20,7 @@ export function Paywall({ feature, description }: PaywallProps) {
         {feature} is a Pro feature
       </h3>
       <p className="text-sm text-text-secondary mb-4">
-        {description || `Upgrade to Breathe Pro to unlock ${feature}. Just $25/yr.`}
+        {description || `Upgrade to Breathe Pro to unlock ${feature}. Just $22/yr.`}
       </p>
       <Link href="/pricing">
         <Button size="lg" className="w-full">

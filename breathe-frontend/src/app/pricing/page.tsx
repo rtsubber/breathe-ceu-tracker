@@ -10,7 +10,7 @@ export default function PricingPage() {
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("yearly");
-  // Billing toggle hidden — flat pricing is $25/yr
+  // Billing toggle hidden — flat pricing is $22/yr
   void billingCycle; void setBillingCycle;
 
   const handleSubscribe = async (tier: "pro" | "department") => {
@@ -52,7 +52,7 @@ export default function PricingPage() {
     {
       name: "Pro",
       icon: Sparkles,
-      price: "$25",
+      price: "$22",
       period: "/year",
       description: "Stop typing. Let the app do the work — OCR, auto-import, email forwarding.",
       features: [
@@ -65,10 +65,10 @@ export default function PricingPage() {
         "Multi-state license support",
         "Chrome extension (coming soon)",
       ],
-      cta: "Upgrade to Pro — $25",
+      cta: "Upgrade to Pro — $22",
       ctaAction: () => handleSubscribe("pro"),
       highlighted: true,
-      savings: "$25/year flat — less than CE Broker",
+      savings: "$22/year flat — less than CE Broker",
     },
     {
       name: "Department",
@@ -178,7 +178,7 @@ export default function PricingPage() {
 
       <div className="px-4 mt-6 text-center">
         <p className="text-xs text-text-secondary">
-          Cancel anytime. Pro is $25/year flat. Less than CE Broker ($29-99/yr).
+          Cancel anytime. Pro is $22/year flat. Less than CE Broker ($29-99/yr).
           Department is $99/mo flat for up to 25 RTs.
         </p>
       </div>

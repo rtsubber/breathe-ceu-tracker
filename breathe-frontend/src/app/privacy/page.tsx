@@ -91,7 +91,7 @@ const sections = [
       "Breathe integrates with the following third-party services. Each has its own privacy policy that governs how they handle your data:",
     ],
     list: [
-      "Stripe — payment processing for Pro plan subscriptions ($25/year). Stripe receives your payment information directly; we do not store credit card numbers.",
+      "Stripe — payment processing for Pro plan subscriptions ($22/year). Stripe receives your payment information directly; we do not store credit card numbers.",
       "Resend — transactional email delivery for renewal reminders and account notifications.",
       "Deepgram — used in the OCR pipeline to extract text from uploaded certificate images (Pro plan feature).",
     ],

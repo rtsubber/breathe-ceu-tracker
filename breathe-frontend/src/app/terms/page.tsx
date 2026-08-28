@@ -11,7 +11,7 @@ const sections = [
     title: "1. Service Description",
     body: [
       "Breathe is a continuing education unit (CEU) tracking tool designed for respiratory therapists. The service allows users to log CEU records, upload certificate images, track progress toward state license renewal and NBRC credential maintenance, generate compliance reports, and sync records with CE Broker.",
-      "Breathe is offered in two tiers: a Free plan with manual entry and basic tracking, and a Pro plan ($25/year) with OCR, auto-import, and CE Broker sync features.",
+      "Breathe is offered in two tiers: a Free plan with manual entry and basic tracking, and a Pro plan ($22/year) with OCR, auto-import, and CE Broker sync features.",
     ],
   },
   {
@@ -47,7 +47,7 @@ const sections = [
   {
     title: "6. Refund Policy",
     body: [
-      "The Pro plan costs $25 per year. We offer a full refund within 14 days of purchase, no questions asked. To request a refund, contact ron.sublett@gmail.com with your account email and transaction ID.",
+      "The Pro plan costs $22 per year. We offer a full refund within 14 days of purchase, no questions asked. To request a refund, contact ron.sublett@gmail.com with your account email and transaction ID.",
       "Refunds are processed back to the original payment method via Stripe within 5–10 business days.",
     ],
   },

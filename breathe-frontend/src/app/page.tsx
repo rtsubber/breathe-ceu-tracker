@@ -23,7 +23,7 @@ export default function SplashPage() {
           CEU tracking that actually works.
         </p>
         <p className="text-base text-text-secondary text-center max-w-md mb-8">
-          Free forever. $25/year to stop doing it manually.
+          Free forever. $22/year to stop doing it manually.
         </p>
         <div className="w-full max-w-sm space-y-3">
           {user ? (
@@ -199,8 +199,8 @@ export default function SplashPage() {
                 Most Popular
               </span>
               <p className="font-semibold text-text-primary mb-1">Pro</p>
-              <p className="text-3xl font-bold text-text-primary mb-1">$25<span className="text-base font-normal text-text-secondary">/year</span></p>
-              <p className="text-xs text-text-secondary mb-3">$25/year flat — less than CE Broker</p>
+              <p className="text-3xl font-bold text-text-primary mb-1">$22<span className="text-base font-normal text-text-secondary">/year</span></p>
+              <p className="text-xs text-text-secondary mb-3">$22/year flat — less than CE Broker</p>
               <ul className="text-sm text-text-secondary space-y-2">
                 <li>✓ Everything in Free, plus:</li>
                 <li>✓ Certificate OCR (snap → auto-extract)</li>
