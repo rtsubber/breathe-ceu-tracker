@@ -244,6 +244,19 @@ class CEBrokerSyncLog(Base):
     ceu = relationship("CEU", backref="sync_logs")
 
 
+class PasswordResetToken(Base):
+    """Tokens for password reset flow — hashed in DB, 1hr expiry, single-use."""
+    __tablename__ = "password_reset_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)  # SHA-256 hex
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)  # null = unused
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="password_reset_tokens")
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)

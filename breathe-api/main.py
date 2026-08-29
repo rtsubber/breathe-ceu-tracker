@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
-from database import init_db, get_db, SessionLocal, DB_PATH
+from database import init_db, get_db, SessionLocal, DB_PATH, PasswordResetToken
 from models import (
     User, License, CEU, Credential, Competency, StateRequirement,
     UserEmailAlias, Subscription, FreeCourseAlert,
@@ -512,6 +512,142 @@ def get_me(current_user: User = Depends(get_current_user)):
 def logout():
     """Logout — client just discards the token."""
     return {"success": True}
+
+
+# ─── Password Reset ──────────────────────────────────────────────
+
+@app.post("/api/auth/forgot-password", tags=["Auth"])
+def forgot_password(payload: dict, db: SessionLocal = Depends(get_db)):
+    """Send a password reset email if the account exists.
+    
+    Always returns 200 (no email enumeration). Rate limited: 3 resets/hr per email.
+    """
+    import hashlib, secrets, time as _time
+    from datetime import timedelta
+    
+    email = (payload.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    
+    # Rate limit: 3 resets per hour per email
+    now = _time.time()
+    key = f"pwreset:{email}"
+    if key not in _login_failures:
+        _login_failures[key] = []
+    recent = [t for t in _login_failures[key] if now - t < 3600]
+    if len(recent) >= 3:
+        raise HTTPException(status_code=429, detail="Too many reset requests. Try again later.")
+    _login_failures[key] = recent + [now]
+    
+    user = db.query(User).filter(User.email == email).first()
+    
+    # Always return success — no email enumeration
+    if not user:
+        return {"success": True, "message": "If an account with that email exists, a reset link has been sent."}
+    
+    # Generate token
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    
+    # Invalidate old tokens for this user
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None)
+    ).update({"used_at": datetime.utcnow()})
+    
+    # Store new token
+    reset_token = PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+    )
+    db.add(reset_token)
+    db.commit()
+    
+    # Send reset email via Resend
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if resend_api_key:
+        import requests as req
+        reset_url = f"https://breathe.sublettlabs.com/reset-password?token={raw_token}"
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+          <h2 style="color: #1a1a1a;">Reset your Breathe password</h2>
+          <p style="color: #666; font-size: 15px;">Hi {user.name},</p>
+          <p style="color: #666; font-size: 15px;">We received a request to reset your password. Click the button below to set a new one:</p>
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="{reset_url}" style="background: #6366f1; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">Reset Password</a>
+          </div>
+          <p style="color: #999; font-size: 13px;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+          <p style="color: #999; font-size: 13px; margin-top: 24px;">— Breathe Team</p>
+        </div>
+        """
+        text = f"Hi {user.name},\n\nReset your Breathe password: {reset_url}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.\n\n— Breathe Team"
+        try:
+            req.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": "Breathe <noreply@brandbooststudio.co>",
+                    "to": [user.email],
+                    "subject": "Reset your Breathe password",
+                    "html": html,
+                    "text": text,
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            logger.error(f"Failed to send reset email: {e}")
+    
+    return {"success": True, "message": "If an account with that email exists, a reset link has been sent."}
+
+
+@app.post("/api/auth/reset-password", tags=["Auth"])
+def reset_password(payload: dict, db: SessionLocal = Depends(get_db)):
+    """Reset password using a token from the forgot-password email."""
+    import hashlib
+    
+    token = (payload.get("token") or "").strip()
+    new_password = (payload.get("new_password") or "")
+    
+    if not token or not new_password:
+        raise HTTPException(status_code=400, detail="Token and new password are required")
+    
+    if len(new_password) < 8 or not any(c.isalpha() for c in new_password) or not any(c.isdigit() for c in new_password):
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include a letter and a number")
+    
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    reset_token = db.query(PasswordResetToken).filter(
+        PasswordResetToken.token_hash == token_hash,
+        PasswordResetToken.used_at.is_(None),
+    ).first()
+    
+    if not reset_token:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    if reset_token.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+    
+    user = db.query(User).filter(User.id == reset_token.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    
+    # Update password
+    user.password_hash = hash_password(new_password)
+    reset_token.used_at = datetime.utcnow()
+    db.commit()
+    
+    # Auto-login: return a fresh token
+    jwt_token = create_access_token(user.id, user.email)
+    return {
+        "success": True,
+        "message": "Password reset successfully",
+        "token": jwt_token,
+        "user": {"id": user.id, "name": user.name, "email": user.email},
+    }
 
 
 @app.post("/api/user/onboarding-complete", tags=["User"])
@@ -1436,7 +1572,7 @@ def send_email_alert(payload: dict, current_user: User = Depends(get_current_use
                 "Content-Type": "application/json",
             },
             json={
-                "from": "Breathe <alerts@breathe.sublettlabs.com>",
+                "from": "Breathe <alerts@brandbooststudio.co>",
                 "to": [recipient],
                 "subject": subject,
                 "html": html_body,
@@ -1544,7 +1680,7 @@ def send_deadline_alerts_cron(api_key: str = Query(None)):
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": "Breathe <alerts@breathe.sublettlabs.com>",
+                    "from": "Breathe <alerts@brandbooststudio.co>",
                     "to": [u["email"]],
                     "subject": subject,
                     "html": html_body,

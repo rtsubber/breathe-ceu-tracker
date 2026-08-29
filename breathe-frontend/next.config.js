@@ -1,11 +1,13 @@
 /** @type {import('next').NextConfig} */
+const BREATHE_API_URL = process.env.BREATHE_API_URL || "http://localhost:8088";
+
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8088/api/:path*",
+        destination: `${BREATHE_API_URL}/api/:path*`,
       },
     ];
   },
