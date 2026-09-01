@@ -1,0 +1,3 @@
+breathe-api/.encryption_key
+*.env
+.encryption_key
