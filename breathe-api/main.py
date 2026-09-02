@@ -754,6 +754,9 @@ def delete_ceu(ceu_id: int, current_user: User = Depends(get_current_user), db: 
         raise HTTPException(status_code=404, detail="CEU not found")
     # Capture title before deletion for audit log
     ceu_title = ceu.title
+    # Delete associated sync_log entries first to avoid NOT NULL constraint violation
+    from models import CEBrokerSyncLog
+    db.query(CEBrokerSyncLog).filter(CEBrokerSyncLog.ceu_id == ceu_id).delete()
     db.delete(ceu)
     db.commit()
 
@@ -810,7 +813,7 @@ async def upload_certificate_ocr(
 
     # Run OCR
     try:
-        result = process_certificate(save_path)
+        result = process_certificate(save_path, cleanup=False)  # Don't delete the saved cert!
     except Exception as e:
         logger.exception("OCR processing failed")
         raise HTTPException(status_code=500, detail="OCR processing failed. Please try again with a clearer image.")
@@ -2255,9 +2258,12 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     Requires BREATHE_ENCRYPTION_KEY environment variable to be set for
     credential encryption. If not configured, sync is gracefully disabled.
     """
-    from cebroker_sync import sync_ceus_to_cebroker, create_sync_log, update_sync_log
+    from cebroker_sync import create_sync_log, update_sync_log
     from crypto import is_encryption_available, decrypt_field
-    from models import CEBrokerSyncLog  # noqa: F401  (used by create_sync_log/update_sync_log)
+    from models import CEBrokerSyncLog
+    import subprocess as _subproc
+    import json as _json
+    import os as _os
 
     # ─── Encryption key check ───────────────────────────────────
     if not is_encryption_available():
@@ -2311,8 +2317,55 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
         for ceu in ceus
     ]
 
-    # Run the sync agent (Playwright browser automation via Node subprocess)
-    results = sync_ceus_to_cebroker(cebroker_email, ceus_to_sync, headless=True)
+    # Run the sync via cebroker_sync_v2.py (OTP → AgentMail → OAuth2 → API submit)
+    # Build CEU data for the v2 script
+    sync_script = _os.path.join(_os.path.expanduser('~/.openclaw/workspace'), 'scripts', 'cebroker_sync_v2.py')
+    
+    # Call the v2 sync script which handles auth + submission internally
+    # We pass the CEU data via environment variable to avoid exposing it in command line
+    ceu_data_for_script = _json.dumps({
+        'email': cebroker_email,
+        'pk_license': 26094428,  # TX license — TODO: make per-user configurable
+        'ceus': ceus_to_sync,
+    })
+    
+    try:
+        proc = _subproc.run(
+            ['python3', sync_script, '--sync', '--user-id', str(current_user.id)],
+            capture_output=True, text=True, timeout=300,
+            cwd=_os.path.dirname(sync_script)
+        )
+        # Parse results from the script output
+        results = {'details': [], 'synced': 0, 'failed': 0, 'errors': []}
+        # The v2 script prints results — parse the summary
+        output = proc.stdout
+        for line in output.splitlines():
+            if '✅' in line and 'Credit ID' in line:
+                # Parse: '  ✅ CEU #51 synced! Credit ID: 38421361'
+                parts = line.split('CEU #')
+                if len(parts) > 1:
+                    ceu_id_str = parts[1].split(' ')[0].rstrip(':')
+                    try:
+                        ceu_id = int(ceu_id_str)
+                        credit_parts = line.split('Credit ID:')
+                        credit_id = int(credit_parts[1].strip()) if len(credit_parts) > 1 else None
+                        results['details'].append({'ceu_id': ceu_id, 'status': 'submitted', 'credit_id': credit_id})
+                        results['synced'] += 1
+                    except:
+                        pass
+            elif '❌' in line and 'failed' in line.lower():
+                parts = line.split('CEU #')
+                if len(parts) > 1:
+                    try:
+                        ceu_id = int(parts[1].split(' ')[0].rstrip(':'))
+                        results['details'].append({'ceu_id': ceu_id, 'status': 'failed'})
+                        results['failed'] += 1
+                    except:
+                        pass
+    except Exception as e:
+        results = {'details': [], 'synced': 0, 'failed': len(ceus), 'errors': [str(e)]}
+    
+    # Also run the old-style result processing for compatibility
 
     # Process results: only mark synced=True for CONFIRMED successes
     # "submitted" status means it was submitted but no confirmation detected — don't mark as synced
@@ -2440,6 +2493,114 @@ def delete_cebroker_email(
     current_user.cebroker_email_encrypted = None
     db.commit()
     return {"success": True, "message": "CE Broker email removed"}
+
+
+@app.put("/api/cebroker/password", tags=["CE Broker Sync"])
+def set_cebroker_password(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Set the CE Broker password for the authenticated user.
+
+    The password is encrypted using Fernet (via crypto.py) before storage.
+    Note: CE Broker (Propelus) uses email OTP login, not password — this is
+    stored for future use if password-based auth is restored, or for
+    reference by the user.
+    """
+    from crypto import is_encryption_available, encrypt_field
+
+    if not is_encryption_available():
+        raise HTTPException(status_code=503, detail="Encryption not configured")
+
+    password = (payload.get("cebroker_password") or "").strip()
+    if not password or len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+
+    encrypted = encrypt_field(password)
+    if not encrypted:
+        raise HTTPException(status_code=500, detail="Failed to encrypt password")
+
+    # Add column if missing
+    try:
+        db.execute(text("UPDATE users SET cebroker_password_encrypted = :enc WHERE id = :uid"),
+                   {"enc": encrypted, "uid": current_user.id})
+        db.commit()
+    except Exception:
+        # Column doesn't exist — add it
+        db.execute(text("ALTER TABLE users ADD COLUMN cebroker_password_encrypted TEXT"))
+        db.commit()
+        db.execute(text("UPDATE users SET cebroker_password_encrypted = :enc WHERE id = :uid"),
+                   {"enc": encrypted, "uid": current_user.id})
+        db.commit()
+
+    return {"success": True, "message": "CE Broker password saved (encrypted)", "has_password": True}
+
+
+@app.get("/api/cebroker/settings", tags=["CE Broker Sync"])
+def get_cebroker_settings(
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Get all CE Broker integration settings for the authenticated user.
+
+    Returns masked email, password existence, license info, and sync status.
+    """
+    from crypto import is_encryption_available, decrypt_field
+
+    encryption_enabled = is_encryption_available()
+
+    # Email (masked)
+    has_email = bool(current_user.cebroker_email_encrypted)
+    email_masked = None
+    if has_email and encryption_enabled:
+        email = decrypt_field(current_user.cebroker_email_encrypted)
+        if email:
+            parts = email.split("@")
+            email_masked = f"{parts[0][:1]}***@{parts[1]}" if len(parts) == 2 else "***"
+
+    # Password (existence only)
+    has_password = False
+    try:
+        row = db.execute(text("SELECT cebroker_password_encrypted FROM users WHERE id = :uid"),
+                        {"uid": current_user.id}).fetchone()
+        has_password = bool(row and row[0])
+    except Exception:
+        pass  # Column doesn't exist yet
+
+    # Licenses
+    licenses = db.query(License).filter(License.user_id == current_user.id).all()
+    license_info = [{
+        "id": lic.id,
+        "state": lic.state,
+        "license_type": lic.license_type,
+        "license_number": lic.license_number,
+        "expiry_date": lic.expiry_date.isoformat() if lic.expiry_date else None,
+    } for lic in licenses]
+
+    # Sync status
+    total_ceus = db.query(CEU).filter(CEU.user_id == current_user.id).count()
+    synced_count = db.query(CEU).filter(
+        CEU.user_id == current_user.id, CEU.cebroker_synced == True
+    ).count()
+
+    return {
+        "encryption_enabled": encryption_enabled,
+        "cebroker_email": {
+            "has_email": has_email,
+            "email_masked": email_masked,
+        },
+        "cebroker_password": {
+            "has_password": has_password,
+        },
+        "licenses": license_info,
+        "sync_status": {
+            "total_ceus": total_ceus,
+            "synced": synced_count,
+            "unsynced": total_ceus - synced_count,
+            "all_synced": (total_ceus - synced_count) == 0 and total_ceus > 0,
+        },
+    }
 
 
 @app.get("/api/cebroker/status", tags=["CE Broker Sync"])

@@ -1,9 +1,9 @@
-"""OCR module for certificate image extraction using easyocr + Claude API.
+"""OCR module for certificate image extraction using easyocr + glm-5.3-flash.
 
 Hybrid approach:
   1. easyocr extracts raw text from the certificate image
-  2. Claude API (claude-sonnet-4-6) parses raw text into structured CEU data
-  3. Regex fallback parser if Claude API is unavailable or fails
+  2. glm-5.3-flash (via Ollama API) parses raw text into structured CEU data
+  3. Regex fallback parser if the API is unavailable or fails
 
 This gives us the broad text extraction of easyocr combined with the
 semantic understanding of an LLM for accurate field extraction.
@@ -13,6 +13,7 @@ import re
 import json
 import logging
 import time
+import urllib.request
 from datetime import datetime
 from typing import Optional
 
@@ -21,196 +22,105 @@ _reader = None
 
 logger = logging.getLogger(__name__)
 
-# ─── Anthropic / Claude configuration ──────────────────────────
+# ─── glm-5.3-flash configuration (via Ollama API) ─────────────
 
-ANTHROPIC_KEY_PATH = "/home/ron/.openclaw/workspace/.anthropic_key"
-CLAUDE_MODEL = "claude-sonnet-4-20250514"  # Valid Anthropic model ID
+OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+OLLAMA_API_KEY_PATH = "/home/ron/.openclaw/workspace/.ollama_key"
+LLM_MODEL = "openrouter/free"
 
-CLAUDE_SYSTEM_PROMPT = (
-    "You are extracting CEU certificate information. "
-    "From the following text extracted from a certificate image, identify: "
-    "course title, provider organization, number of credits/CEUs/contact hours, "
+LLM_SYSTEM_PROMPT = (
+    "You are extracting CEU certificate information from OCR text. "
+    "IMPORTANT: The 'title' field must be the COURSE NAME or PROGRAM NAME — NOT the student's name. "
+    "The student's name is the person who completed the course — do NOT use it as the title. "
+    "Look for the course/program title near keywords like 'Course', 'Program', 'CRCE', 'Quiz', 'Seminar', 'Workshop'. "
+    "If the text contains a person's name AND a course title, use the COURSE TITLE as the title. "
+    "From the following text extracted from a certificate, identify: "
+    "course title (NOT person name), provider organization, number of credits/CEUs/contact hours, "
     "completion date, and category (clinical/safety/ethics/leadership). "
     'Return JSON only with keys: title, provider, credits, completion_date, category, confidence. '
     'The credits field must be a number (float). The completion_date must be in YYYY-MM-DD format. '
     'The category must be one of: clinical, safety, ethics, leadership. '
-    'The confidence field should be a number between 0 and 1 representing your confidence in the extraction.'
+    'The confidence field should be a number between 0 and 1 representing your confidence in the extraction. '
+    'Example: if the text says "William Sublett completed The Ethics of Ambiguity: Life and Death in the NICU", '
+    'the title should be "The Ethics of Ambiguity: Life and Death in the NICU", NOT "William Sublett".'
 )
 
-CLAUDE_MAX_TOKENS = 1024
+LLM_MAX_TOKENS = 1024
 
 
-def _get_anthropic_key() -> str:
-    """Read the Anthropic API key from the shared key file."""
-    try:
-        with open(ANTHROPIC_KEY_PATH, "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        logger.warning("Anthropic key file not found at %s", ANTHROPIC_KEY_PATH)
-        return ""
-
-
-def _get_reader():
-    """Lazy-load easyocr Reader singleton."""
-    global _reader
-    if _reader is None:
-        import easyocr
-        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    return _reader
-
-
-# ─── Image handling ─────────────────────────────────────────────
-
-def save_certificate_image(file_bytes: bytes, filename: str, user_id: int) -> str:
-    """Save uploaded certificate image to /tmp/breathe/certificates/."""
-    cert_dir = f"/tmp/breathe/certificates/user_{user_id}"
-    os.makedirs(cert_dir, exist_ok=True)
-    safe_name = os.path.basename(filename)
-    save_path = os.path.join(cert_dir, safe_name)
-    with open(save_path, "wb") as f:
-        f.write(file_bytes)
-    return save_path
-
-
-# ─── Temp file cleanup ─────────────────────────────────────────
-
-CERT_TEMP_DIR = "/tmp/breathe/certificates"
-CERT_MAX_AGE_SECONDS = 3600  # 1 hour
-
-
-def _safe_delete_file(file_path: str) -> None:
-    """Delete a file silently, ignoring errors if it doesn't exist."""
-    try:
-        if file_path and os.path.isfile(file_path):
-            os.remove(file_path)
-            logger.debug("Deleted temp certificate file: %s", file_path)
-        # Also try to remove the user directory if it's now empty
-        parent = os.path.dirname(file_path) if file_path else ""
-        if parent and os.path.isdir(parent):
-            try:
-                os.rmdir(parent)  # Only succeeds if empty
-            except OSError:
-                pass  # Directory not empty, leave it
-    except Exception as e:
-        logger.warning("Failed to delete temp file %s: %s", file_path, e)
-
-
-def cleanup_old_temp_files(max_age_seconds: int = CERT_MAX_AGE_SECONDS) -> dict:
-    """Scan /tmp/breathe/certificates/ and delete files older than max_age_seconds.
-
-    This is a backstop cleanup function — it catches files that slip through
-    the try/finally in process_certificate (e.g. if the process crashed).
-
-    Returns a summary dict with counts.
-    """
-    deleted_files = 0
-    deleted_dirs = 0
-    errors = 0
-    now = time.time()
-
-    if not os.path.isdir(CERT_TEMP_DIR):
-        return {"deleted_files": 0, "deleted_dirs": 0, "errors": 0, "scanned": False}
-
-    for root, dirs, files in os.walk(CERT_TEMP_DIR, topdown=False):
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            try:
-                if os.path.isfile(fpath):
-                    mtime = os.path.getmtime(fpath)
-                    if (now - mtime) > max_age_seconds:
-                        os.remove(fpath)
-                        deleted_files += 1
-                        logger.info("Cleanup: deleted stale temp cert file: %s", fpath)
-            except Exception as e:
-                errors += 1
-                logger.warning("Cleanup: error deleting %s: %s", fpath, e)
-
-        # Remove empty user directories
-        for dname in dirs:
-            dpath = os.path.join(root, dname)
-            try:
-                if os.path.isdir(dpath) and not os.listdir(dpath):
-                    os.rmdir(dpath)
-                    deleted_dirs += 1
-                    logger.debug("Cleanup: removed empty dir: %s", dpath)
-            except Exception as e:
-                errors += 1
-                logger.warning("Cleanup: error removing dir %s: %s", dpath, e)
-
-    # Try to remove the top-level dir if empty
-    try:
-        if os.path.isdir(CERT_TEMP_DIR) and not os.listdir(CERT_TEMP_DIR):
-            os.rmdir(CERT_TEMP_DIR)
-            deleted_dirs += 1
-    except Exception:
-        pass
-
-    return {
-        "deleted_files": deleted_files,
-        "deleted_dirs": deleted_dirs,
-        "errors": errors,
-        "scanned": True,
-    }
 
 
 def extract_text_from_image(image_path: str) -> list:
-    """Extract text from image using easyocr. Returns list of (text, confidence) tuples."""
-    reader = _get_reader()
-    results = reader.readtext(image_path)
-    extracted = []
-    for bbox, text, conf in results:
-        extracted.append((text.strip(), float(conf)))
-    return extracted
-
+    """Extract text from an image using easyocr. Returns list of (text, confidence) tuples."""
+    global _reader
+    if _reader is None:
+        import easyocr
+        _reader = easyocr.Reader(['en'], gpu=False)
+    
+    results = _reader.readtext(image_path)
+    # Return list of (text, confidence) tuples
+    return [(text, conf) for _, text, conf in results]
 
 def extract_text_from_pdf(pdf_path: str) -> list:
-    """Extract text from PDF using PyMuPDF. Returns list of (text, confidence) tuples.
-
-    Confidence is set to 0.95 for PDF text (digital text, not OCR)."""
+    """Extract text from a PDF using PyMuPDF (fitz). Returns list of (text, confidence) tuples."""
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        logger.error("PyMuPDF (fitz) not installed — cannot extract PDF text")
+        logger.warning("PyMuPDF not installed — cannot extract text from PDF")
         return []
-
+    
+    doc = fitz.open(pdf_path)
     extracted = []
-    try:
-        doc = fitz.open(pdf_path)
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text = page.get_text()
-            for line in text.split("\n"):
-                line = line.strip()
-                if line:
-                    extracted.append((line, 0.95))
-        doc.close()
-    except Exception as e:
-        logger.error("PDF text extraction failed: %s", e)
-        return []
+    for page in doc:
+        text = page.get_text()
+        if text.strip():
+            extracted.append((text.strip(), 1.0))  # Digital text = 100% confidence
+    doc.close()
     return extracted
 
+def _raw_text_from_extracted(extracted: list) -> str:
+    """Convert extracted list of (text, confidence) tuples into a single raw text string."""
+    return ' '.join([text for text, _ in extracted])
 
 def is_pdf(file_path: str) -> bool:
-    """Check if a file is a PDF based on extension or magic bytes."""
-    if file_path.lower().endswith(".pdf"):
-        return True
+    """Check if a file is a PDF."""
+    return file_path.lower().endswith('.pdf')
+
+
+def _safe_delete_file(file_path: str) -> None:
+    """Safely delete a file, ignoring errors."""
     try:
-        with open(file_path, "rb") as f:
-            header = f.read(5)
-        return header == b"%PDF-"
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
     except Exception:
-        return False
+        pass
 
 
-# ─── Claude API semantic parser ────────────────────────────────
+def save_certificate_image(file_bytes: bytes, filename: str, user_id: int) -> str:
+    """Save uploaded certificate image to a permanent directory."""
+    cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certificates", f"user_{user_id}")
+    os.makedirs(cert_dir, exist_ok=True)
+    
+    safe_name = os.path.basename(filename)
+    save_path = os.path.join(cert_dir, safe_name)
+    
+    with open(save_path, "wb") as f:
+        f.write(file_bytes)
+    
+    return save_path
 
-def _raw_text_from_extracted(extracted: list) -> str:
-    """Join easyocr results into a single text blob."""
-    return "\n".join(t for t, c in extracted)
+
+def _get_ollama_key() -> str:
+    """Read the Ollama API key from the key file."""
+    try:
+        with open(OLLAMA_API_KEY_PATH) as f:
+            return f.read().strip()
+    except Exception:
+        return os.environ.get("OLLAMA_API_KEY", "")
 
 
-def parse_with_claude(raw_text: str) -> Optional[dict]:
-    """Send raw OCR text to Claude API for semantic parsing.
+def parse_with_llm(raw_text: str) -> Optional[dict]:
+    """Send raw OCR text to glm-5.3-flash (via Ollama API) for semantic parsing.
 
     Returns dict with keys: title, provider, credits, completion_date,
     category, confidence — or None if the API call fails.
@@ -218,40 +128,44 @@ def parse_with_claude(raw_text: str) -> Optional[dict]:
     if not raw_text.strip():
         return None
 
-    api_key = _get_anthropic_key()
+    api_key = _get_ollama_key()
     if not api_key:
-        logger.warning("No Anthropic API key — skipping Claude parsing")
+        logger.warning("No Ollama API key — skipping LLM parsing")
         return None
 
     try:
-        import anthropic
-    except ImportError:
-        logger.warning("anthropic package not installed — skipping Claude parsing")
-        return None
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=CLAUDE_MAX_TOKENS,
-            messages=[
+        payload = json.dumps({
+            "model": LLM_MODEL,
+            "messages": [
                 {
                     "role": "user",
-                    "content": f"{CLAUDE_SYSTEM_PROMPT}\n\n--- Certificate Text ---\n{raw_text}",
+                    "content": f"{LLM_SYSTEM_PROMPT}\n\n--- Certificate Text ---\n{raw_text}",
                 }
             ],
+            "max_tokens": LLM_MAX_TOKENS,
+            "temperature": 0.1,
+        }).encode()
+
+        req = urllib.request.Request(
+            OLLAMA_API_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
         )
 
-        # Extract text from response
-        response_text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                response_text += block.text
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+            response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if not response_text.strip():
+            logger.warning("Empty LLM response")
+            return None
 
         # Parse JSON from response (handle markdown code fences)
         response_text = response_text.strip()
         if response_text.startswith("```"):
-            # Remove markdown code fences
             lines = response_text.split("\n")
             lines = [ln for ln in lines if not ln.strip().startswith("```")]
             response_text = "\n".join(lines)
@@ -259,7 +173,7 @@ def parse_with_claude(raw_text: str) -> Optional[dict]:
         # Find the JSON object in the response
         json_match = re.search(r"\{[^{}]*\}", response_text, re.DOTALL)
         if not json_match:
-            logger.warning("Could not find JSON in Claude response: %s", response_text[:200])
+            logger.warning("Could not find JSON in LLM response: %s", response_text[:200])
             return None
 
         data = json.loads(json_match.group(0))
@@ -275,16 +189,15 @@ def parse_with_claude(raw_text: str) -> Optional[dict]:
         }
         return result
 
-    except anthropic.APIError as e:
-        logger.error("Claude API error: %s", e)
+    except urllib.error.HTTPError as e:
+        logger.error("Ollama API error: HTTP %s — %s", e.code, e.read().decode()[:200])
         return None
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse Claude JSON response: %s", e)
+        logger.error("Failed to parse LLM JSON response: %s", e)
         return None
     except Exception as e:
-        logger.error("Unexpected Claude API failure: %s", e)
+        logger.error("Unexpected LLM API failure: %s", e)
         return None
-
 
 # ─── Regex fallback parser ──────────────────────────────────────
 
@@ -513,21 +426,21 @@ def parse_ceu_data(extracted: list) -> dict:
         }
 
     # Try Claude API first
-    claude_result = parse_with_claude(raw_text)
+    llm_result = parse_with_llm(raw_text)
 
-    if claude_result:
-        # Merge in raw_text (Claude doesn't return it)
-        claude_result["raw_text"] = raw_text
+    if llm_result:
+        # Merge in raw_text (LLM doesn't return it)
+        llm_result["raw_text"] = raw_text
         # Use the higher of Claude confidence vs easyocr avg confidence
         avg_ocr_conf = sum(c for _, c in extracted) / len(extracted) if extracted else 0.0
-        claude_result["confidence"] = max(
-            claude_result.get("confidence", 0.8),
+        llm_result["confidence"] = max(
+            llm_result.get("confidence", 0.8),
             round(avg_ocr_conf, 3),
         )
-        return claude_result
+        return llm_result
 
     # Fall back to regex parser
-    logger.info("Claude parsing failed or unavailable — using regex fallback")
+    logger.info("LLM parsing failed or unavailable — using regex fallback")
     return parse_with_regex(extracted)
 
 
@@ -536,7 +449,7 @@ def process_certificate(image_path: str, cleanup: bool = True) -> dict:
 
     1. For images: easyocr extracts raw text
     2. For PDFs: PyMuPDF extracts digital text directly
-    3. Claude API parses raw text into structured CEU data
+    3. LLM (glm-5.3-flash) parses raw text into structured CEU data
     4. Falls back to regex parser if Claude fails
 
     By default, deletes the temporary certificate file after processing

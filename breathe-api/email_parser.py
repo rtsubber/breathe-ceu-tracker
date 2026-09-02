@@ -339,7 +339,7 @@ def save_attachment(attachment: dict, user_id: int) -> Optional[str]:
     if ext not in CERTIFICATE_EXTS and "pdf" not in content_type and "image" not in content_type:
         return None
 
-    cert_dir = f"/tmp/breathe/certificates/user_{user_id}"
+    cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certificates", f"user_{user_id}")
     os.makedirs(cert_dir, exist_ok=True)
 
     # Avoid name collisions
