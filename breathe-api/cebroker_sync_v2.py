@@ -49,6 +49,7 @@ class CEBrokerSync:
     def __init__(self, email=CEB_EMAIL, pk_license=PK_LICENSE):
         self.email = email
         self.pk_license = pk_license
+        self.profession_credit_id = PROFESSION_CREDIT_ID
         self.session = None
         self.jar = http.cookiejar.CookieJar()
         self.opener = None
@@ -201,7 +202,40 @@ class CEBrokerSync:
         with self.opener.open(req, timeout=15) as r:
             return json.loads(r.read().decode())
 
-    def get_form_config(self, profession_credit_id=PROFESSION_CREDIT_ID):
+    def resolve_license(self, license_number=None):
+        """After auth, fetch the user's licenses from CE Broker and pick the right one.
+        Sets self.pk_license and self.profession_credit_id dynamically.
+        If license_number is provided, tries to match it. Else uses the first active license."""
+        try:
+            licenses = self.get_licenses()
+            # Handle both list and dict responses
+            if isinstance(licenses, dict) and 'licenses' in licenses:
+                licenses = licenses['licenses']
+            if not isinstance(licenses, list) or not licenses:
+                print("[license] No licenses returned from CE Broker — using defaults")
+                return
+            # Try to match by license_number if provided
+            chosen = None
+            if license_number:
+                for lic in licenses:
+                    lic_num = lic.get('licenseNumber') or lic.get('license_number') or ''
+                    if lic_num.lower() == license_number.lower():
+                        chosen = lic
+                        break
+            if not chosen:
+                chosen = licenses[0]  # fallback: first license
+            # Extract pkLicense and professionCreditId (handle various key names)
+            self.pk_license = (chosen.get('pkLicense') or chosen.get('pk_license')
+                               or chosen.get('id') or self.pk_license)
+            self.profession_credit_id = (chosen.get('professionCreditId')
+                                         or chosen.get('profession_credit_id')
+                                         or PROFESSION_CREDIT_ID)
+            print(f"[license] Resolved: pkLicense={self.pk_license}, "
+                  f"professionCreditId={self.profession_credit_id}")
+        except Exception as e:
+            print(f"[license] Could not fetch licenses (using defaults): {e}")
+
+    def get_form_config(self, profession_credit_id=None):
         """Get form config: subject areas, questions, course types."""
         config = {}
 
@@ -264,7 +298,7 @@ class CEBrokerSync:
             headers={'Content-Type': 'application/json',
                      'Accept': 'application/json',
                      'Origin': APP_BASE,
-                     'Referer': f'{APP_BASE}/report-ce/report/{PROFESSION_CREDIT_ID}?lic={self.pk_license}'})
+                     'Referer': f'{APP_BASE}/report-ce/report/{self.profession_credit_id}?lic={self.pk_license}'})
         try:
             with self.opener.open(req, timeout=20) as r:
                 resp = json.loads(r.read().decode())
@@ -337,7 +371,7 @@ class CEBrokerSync:
         # Build submission payload (FLAT — not wrapped in "submission")
         submission = {
             'pkLicense': self.pk_license,
-            'professionCreditId': PROFESSION_CREDIT_ID,
+            'professionCreditId': self.profession_credit_id,
             'completionDate': date_str,
             'subjectAreas': [{'id': sa_id, 'hours': float(ceu_data.get('hours', 1.0)), 'answer': True}],
             'answers': answers,
@@ -372,7 +406,7 @@ class CEBrokerSync:
             headers={'Content-Type': 'application/json',
                      'Accept': 'application/json',
                      'Origin': APP_BASE,
-                     'Referer': f'{APP_BASE}/report-ce/report/{PROFESSION_CREDIT_ID}?lic={self.pk_license}'})
+                     'Referer': f'{APP_BASE}/report-ce/report/{self.profession_credit_id}?lic={self.pk_license}'})
         try:
             with self.opener.open(req, timeout=20) as r:
                 resp = json.loads(r.read().decode())
@@ -454,6 +488,20 @@ def update_sync_log(db_path, user_id, ceu_id, status, credit_id=None, error_mess
     conn.close()
 
 
+
+def get_user_license_number(db_path, user_id):
+    """Read the user's license number from the Breathe DB for CE Broker matching."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        row = cur.execute(
+            'SELECT license_number FROM licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1',
+            (user_id,)).fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
 def sync_user_ceus(user_id=15, email=CEB_EMAIL, pk_license=PK_LICENSE, dry_run=False, otp_code=None, session_file=None):
     """Sync all unsynced CEUs for a user."""
     print(f"\n{'='*60}")
@@ -498,6 +546,10 @@ def sync_user_ceus(user_id=15, email=CEB_EMAIL, pk_license=PK_LICENSE, dry_run=F
     except Exception as e:
         print(f"Authentication failed: {e}")
         return
+
+    # Resolve the user's license dynamically from CE Broker (per-user, not hardcoded)
+    user_license = get_user_license_number(BREATHE_DB, user_id)
+    sync.resolve_license(license_number=user_license)
 
     # Get form config
     form_config = sync.get_form_config()
