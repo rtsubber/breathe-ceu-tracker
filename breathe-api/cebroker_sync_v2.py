@@ -233,7 +233,7 @@ class CEBrokerSync:
             print(f"[license] Resolved: pkLicense={self.pk_license}, "
                   f"professionCreditId={self.profession_credit_id}")
         except Exception as e:
-            print(f"[license] Could not fetch licenses (using defaults): {e}")
+            raise Exception(f"License resolution failed — refusing to fall back to another user's license: {e}")
 
     def get_form_config(self, profession_credit_id=None):
         """Get form config: subject areas, questions, course types."""
@@ -326,7 +326,15 @@ class CEBrokerSync:
         Returns:
             dict with idPostCeCredit and status, or None on failure
         """
-        sa_id = form_config['subject_areas'][0]['id'] if form_config['subject_areas'] else 8790
+        # Map the CEU's category to a CE Broker subject area by name
+        sa_id = None
+        category = (ceu_data.get('category') or '').lower()
+        for sa in form_config['subject_areas']:
+            if category and category in str(sa.get('name', sa.get('description', ''))).lower():
+                sa_id = sa['id']
+                break
+        if not sa_id:
+            sa_id = form_config['subject_areas'][0]['id'] if form_config['subject_areas'] else 8790
         questions = form_config['questions']
 
         # Build answers from questions — ORDER MATTERS!
@@ -348,7 +356,10 @@ class CEBrokerSync:
                 answers.append({'questionId': q['id'],
                                'answer': ceu_data.get('course_name', ceu_data.get('title', ''))})
             else:
-                answers.append({'questionId': q['id'], 'answer': 'Yes'})
+                # Unrecognized attestation question — do NOT blind-answer on a
+                # licensee's behalf. Halt this submission and surface it.
+                print(f"  [attest] Unrecognized question (id {q['id']}): {q['text'][:80]}")
+                return None
 
         # Upload certificate if provided
         attachments = []
@@ -563,13 +574,8 @@ def sync_user_ceus(user_id=15, email=CEB_EMAIL, pk_license=PK_LICENSE, dry_run=F
         # Check if certificate exists
         cert_path = ceu['certificate_path']
         if cert_path and not os.path.exists(cert_path):
-            # Try workspace copy
-            alt_path = f"{WORKSPACE}/ceu-tracker/breathe-api/certificates/user_15/CRCE_Quiz_William_Sublett_08-04-2026.pdf"
-            if os.path.exists(alt_path):
-                cert_path = alt_path
-            else:
-                print(f"  Certificate not found: {cert_path} — submitting without attachment")
-                cert_path = None
+            print(f"  Certificate not found: {cert_path} — submitting without attachment")
+            cert_path = None
 
         # Build CEU data for submission
         ceu_data = {
@@ -578,6 +584,7 @@ def sync_user_ceus(user_id=15, email=CEB_EMAIL, pk_license=PK_LICENSE, dry_run=F
             'approval': 'Approved by AARC (American Association for Respiratory Care)',
             'completion_date': ceu['completion_date'],
             'hours': ceu['hours'],
+            'category': ceu['category'],
             'course_type': COURSE_TYPE,
             'delivery_method': DELIVERY_METHOD,
         }

@@ -20,10 +20,10 @@ export default function SplashPage() {
           Breathe
         </h1>
         <p className="text-xl text-text-primary font-semibold text-center max-w-md mb-2">
-          CEU tracking that actually works.
+          Renewing your Texas RT license by Nov 30? CE Broker reporting is now mandatory.
         </p>
         <p className="text-base text-text-secondary text-center max-w-md mb-8">
-          Free forever. $22/year to stop doing it manually.
+          Breathe files it for you. Free forever. $22/year to stop doing it manually.
         </p>
         <div className="w-full max-w-sm space-y-3">
           {user ? (

@@ -2,7 +2,7 @@
 
 > Your career, organized.
 
-A CEU tracker built by an RRT, for RTs. Free for individual respiratory therapists. Pro is $25/year flat.
+A CEU tracker built by an RRT, for RTs. Free for individual respiratory therapists. Pro is $22/year flat.
 
 **Live at:** [breathe.sublettlabs.com](https://breathe.sublettlabs.com)
 
@@ -10,7 +10,7 @@ A CEU tracker built by an RRT, for RTs. Free for individual respiratory therapis
 
 Starting September 1, 2026, TMB (Texas Medical Board) requires digital CE verification through CE Broker for license renewal (SB 912). CE Broker charges $29-99/year for a paid tier with a web interface from 2008.
 
-Breathe makes it painless — track your CEUs with OCR, auto-import from AARC, and (coming soon) auto-sync to CE Broker so you never have to manually type anything again.
+Breathe makes it painless — track your CEUs with OCR, auto-import from AARC, and auto-sync to CE Broker (live) so you never have to manually type anything again.
 
 ## Features
 
@@ -26,11 +26,11 @@ Breathe makes it painless — track your CEUs with OCR, auto-import from AARC, a
 - ✅ Competency tracking (annual + unit-specific)
 - ✅ Multi-state license support
 
-### Pro ($25/year flat)
+### Pro ($22/year flat)
 - ✅ Certificate OCR (snap photo → AI extracts everything)
 - ✅ Email forwarding (auto-parse CEU emails from 13+ providers)
 - ✅ AARC auto-import
-- ✅ CE Broker auto-sync (coming soon)
+- ✅ CE Broker auto-sync (live)
 - ✅ SMS reminders
 - ✅ Chrome extension (coming soon)
 

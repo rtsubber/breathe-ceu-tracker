@@ -2273,6 +2273,13 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     Requires BREATHE_ENCRYPTION_KEY environment variable to be set for
     credential encryption. If not configured, sync is gracefully disabled.
     """
+    import os as _env_os
+    if _env_os.environ.get('BREATHE_CEBROKER_SYNC_ENABLED', 'true').lower() not in ('true', '1', 'yes'):
+        return CEBrokerSyncResult(
+            synced=0, failed=0, errors=[], details=[],
+            message="CE Broker sync is disabled via BREATHE_CEBROKER_SYNC_ENABLED.",
+        )
+
     from cebroker_sync import create_sync_log, update_sync_log
     from crypto import is_encryption_available, decrypt_field
     from models import CEBrokerSyncLog
@@ -2344,13 +2351,7 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     # Run the sync via cebroker_sync_v2.py (saved OTP session → API submit)
     sync_script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'cebroker_sync_v2.py')
     
-    # Call the v2 sync script which handles auth + submission internally
-    # We pass the CEU data via environment variable to avoid exposing it in command line
-    ceu_data_for_script = _json.dumps({
-        'email': cebroker_email,
-        'pk_license': 26094428,  # TX license — TODO: make per-user configurable
-        'ceus': ceus_to_sync,
-    })
+    # Run the sync via the v2 script (subprocess; per-user license resolved inside)
     
     try:
         proc = _subproc.run(
@@ -2426,6 +2427,9 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
                 ceu.cebroker_synced = True
                 ceu.cebroker_synced_at = datetime.utcnow()
         db.commit()
+
+    results['submitted_unconfirmed'] = sum(
+        1 for d in results.get('details', []) if d.get('status') == 'submitted')
 
     return CEBrokerSyncResult(
         synced=results.get("synced", 0),

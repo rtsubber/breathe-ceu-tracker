@@ -278,7 +278,8 @@ export default function IntegrationsSettingsPage() {
             </div>
             <p className="text-xs text-gray-500">
               We trigger CE Broker to email you a one-time code. Enter it here to connect
-              your account — no password sharing needed.
+              your account — no password sharing needed. When connected, Breathe submits
+              your CEUs to CE Broker automatically on your behalf (you can disconnect anytime).
             </p>
             {!otpSent ? (
               <button
