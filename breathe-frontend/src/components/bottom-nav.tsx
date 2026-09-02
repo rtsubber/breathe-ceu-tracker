@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, FileText, Award, Gift, User } from "lucide-react";
+import { Home, FileText, Award, Gift, User, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -10,7 +10,7 @@ const navItems = [
   { href: "/ceus", label: "CEUs", icon: FileText },
   { href: "/free-courses", label: "Free CEU", icon: Gift },
   { href: "/credentials", label: "Creds", icon: Award },
-  { href: "/profile", label: "Profile", icon: User },
+  { href: "/settings/integrations", label: "Settings", icon: Settings },
 ];
 
 export function BottomNav() {
