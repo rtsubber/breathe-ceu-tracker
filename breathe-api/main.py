@@ -2242,6 +2242,21 @@ class CEBrokerSyncLogOut(BaseModel):
         from_attributes = True
 
 
+class CEBrokerOTPRequest(BaseModel):
+    """Request a CE Broker sign-in OTP for the customer connect flow."""
+    cebroker_email: Optional[str] = None  # Optional: overrides stored email
+
+
+class CEBrokerOTPVerify(BaseModel):
+    otp_code: str
+
+
+class CEBrokerOTPVerifyOut(BaseModel):
+    connected: bool
+    message: Optional[str] = None
+    user_name: Optional[str] = None
+
+
 @app.post("/api/cebroker/sync", response_model=CEBrokerSyncResult, tags=["CE Broker Sync"])
 def sync_to_cebroker(current_user: User = Depends(get_current_user), db: SessionLocal = Depends(get_db)):
     """Sync all unreported CEUs to CE Broker.
@@ -2271,6 +2286,15 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
             synced=0, failed=0, errors=[], details=[],
             message=("CE Broker sync disabled: BREATHE_ENCRYPTION_KEY environment variable "
                      "is not set. Configure it to enable CE Broker sync.")
+        )
+
+    # ─── Connection check: the customer OTP session must exist ───
+    session_file = _cebroker_session_path(current_user.id)
+    if not _os.path.exists(session_file):
+        return CEBrokerSyncResult(
+            synced=0, failed=0, errors=[], details=[],
+            message=("CE Broker not connected yet — open Settings → Integrations, "
+                     "enter your CE Broker email, and verify the 6-digit code we email you."),
         )
 
     # Get all CEUs for this user that haven't been synced to CE Broker yet
@@ -2317,9 +2341,8 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
         for ceu in ceus
     ]
 
-    # Run the sync via cebroker_sync_v2.py (OTP → AgentMail → OAuth2 → API submit)
-    # Build CEU data for the v2 script
-    sync_script = _os.path.join(_os.path.expanduser('~/.openclaw/workspace'), 'scripts', 'cebroker_sync_v2.py')
+    # Run the sync via cebroker_sync_v2.py (saved OTP session → API submit)
+    sync_script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'cebroker_sync_v2.py')
     
     # Call the v2 sync script which handles auth + submission internally
     # We pass the CEU data via environment variable to avoid exposing it in command line
@@ -2331,14 +2354,22 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
     
     try:
         proc = _subproc.run(
-            ['python3', sync_script, '--sync', '--user-id', str(current_user.id)],
+            ['python3', sync_script, '--sync', '--user-id', str(current_user.id),
+             '--session-file', session_file],
             capture_output=True, text=True, timeout=300,
             cwd=_os.path.dirname(sync_script)
         )
         # Parse results from the script output
-        results = {'details': [], 'synced': 0, 'failed': 0, 'errors': []}
+        results = {'details': [], 'synced': 0, 'failed': 0, 'errors': [],
+                   'reauth_required': False}
         # The v2 script prints results — parse the summary
         output = proc.stdout
+        if 'REAUTH_REQUIRED' in output:
+            return CEBrokerSyncResult(
+                synced=0, failed=0, errors=[], details=[],
+                message=("CE Broker session expired — reconnect via Settings → "
+                         "Integrations (we'll email you a fresh code)."),
+            )
         for line in output.splitlines():
             if '✅' in line and 'Credit ID' in line:
                 # Parse: '  ✅ CEU #51 synced! Credit ID: 38421361'
@@ -2403,6 +2434,110 @@ def sync_to_cebroker(current_user: User = Depends(get_current_user), db: Session
         errors=results.get("errors", []),
         details=results.get("details", []),
     )
+
+
+# ─── CE Broker OTP Connect Flow (Customer) ────────────────────
+
+_cebroker_otp_sent_at = {}  # user_id -> epoch seconds (in-process rate-limit guard)
+
+
+def _cebroker_session_path(user_id: int) -> str:
+    """Per-user saved CE Broker session jar (cookie file, 0600)."""
+    import os as _os
+    return _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                         "data", f"cebroker_session_{user_id}.jar")
+
+
+@app.post("/api/cebroker/send-otp", tags=["CE Broker Sync"])
+def cebroker_send_otp(
+    payload: CEBrokerOTPRequest,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Customer connect flow, step 1: email a CE Broker sign-in OTP.
+
+    Stores the email encrypted, then asks CE Broker to send the 6-digit code.
+    Rate-limited to one send per 60 seconds per user.
+    """
+    from crypto import is_encryption_available, encrypt_field, decrypt_field
+    from cebroker_sync_v2 import CEBrokerSync
+    import time as _time
+
+    if not is_encryption_available():
+        raise HTTPException(status_code=503, detail={
+            "error": "encryption_not_configured",
+            "message": ("BREATHE_ENCRYPTION_KEY is not set — CE Broker "
+                        "connection is disabled."),
+        })
+
+    email = (payload.cebroker_email or "").strip().lower()
+    if not email and current_user.cebroker_email_encrypted:
+        email = decrypt_field(current_user.cebroker_email_encrypted) or ""
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid CE Broker email is required")
+
+    now = _time.time()
+    if now - _cebroker_otp_sent_at.get(current_user.id, 0) < 60:
+        raise HTTPException(status_code=429,
+                            detail="Please wait a minute before requesting another code.")
+
+    try:
+        CEBrokerSync(email=email).send_otp(email)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"CE Broker did not accept the OTP request: {e}")
+
+    encrypted = encrypt_field(email)
+    if encrypted:
+        current_user.cebroker_email_encrypted = encrypted
+        db.commit()
+
+    _cebroker_otp_sent_at[current_user.id] = now
+    parts = email.split("@")
+    masked = f"{parts[0][:1]}***@{parts[1]}" if len(parts) == 2 else "***"
+    return {"sent": True, "email_masked": masked,
+            "message": "Check your email for the 6-digit code, then enter it below."}
+
+
+@app.post("/api/cebroker/verify-otp", response_model=CEBrokerOTPVerifyOut, tags=["CE Broker Sync"])
+def cebroker_verify_otp(
+    payload: CEBrokerOTPVerify,
+    current_user: User = Depends(get_current_user),
+    db: SessionLocal = Depends(get_db),
+):
+    """Customer connect flow, step 2: complete the CE Broker login with the
+    OTP code from the user's email inbox, and store the session for syncing."""
+    from crypto import is_encryption_available, decrypt_field
+    from cebroker_sync_v2 import CEBrokerSync
+
+    if not is_encryption_available():
+        raise HTTPException(status_code=503, detail={
+            "error": "encryption_not_configured",
+            "message": "BREATHE_ENCRYPTION_KEY is not set — CE Broker connect is disabled.",
+        })
+
+    otp_code = (payload.otp_code or "").strip()
+    if not (otp_code.isdigit() and len(otp_code) == 6):
+        raise HTTPException(status_code=400, detail="Enter the 6-digit code from your email.")
+
+    email = None
+    if current_user.cebroker_email_encrypted:
+        email = decrypt_field(current_user.cebroker_email_encrypted) or ""
+    if not email:
+        raise HTTPException(status_code=400,
+                            detail="Enter your CE Broker email and send the code first.")
+
+    session_file = _cebroker_session_path(current_user.id)
+    sync_client = CEBrokerSync(email=email)
+    try:
+        sync_client.login_with_otp(otp_code)
+        sync_client.save_session(session_file)
+    except Exception as e:
+        return CEBrokerOTPVerifyOut(connected=False, message=str(e))
+
+    return CEBrokerOTPVerifyOut(connected=True,
+                                message="CE Broker connected ✅ — you can sync now.")
 
 
 # ─── CE Broker Email Settings (Encrypted) ─────────────────────
