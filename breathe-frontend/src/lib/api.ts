@@ -527,6 +527,26 @@ export function getAssessmentReminder(): Promise<AssessmentReminder> {
   return apiFetch<AssessmentReminder>(`/api/nbrc/assessment-reminder`);
 }
 
+export async function syncNBRCPortal(email: string, password: string): Promise<NBRCStatus> {
+  // Start async scrape job
+  const startResp = await apiFetch<{ job_id: string; status: string }>(`/api/nbrc/scrape-async`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  const jobId = startResp.job_id;
+
+  // Poll for completion (scrape takes ~30-40s)
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const status = await apiFetch<{ status: string; result?: NBRCStatus; error?: string }>(
+      `/api/nbrc/scrape-status/${jobId}`
+    );
+    if (status.status === "completed" && status.result) return status.result;
+    if (status.status === "failed") throw new Error(status.error || "NBRC sync failed");
+  }
+  throw new Error("NBRC sync timed out — try again");
+}
+
 // ─── Email Alias API ───────────────────────────────────────────
 
 export type EmailAliasInfo = {

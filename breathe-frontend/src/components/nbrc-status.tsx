@@ -14,10 +14,12 @@ import {
   ChevronRight,
   Loader2,
   Target,
+  RefreshCw,
 } from "lucide-react";
 import {
   getNBRCStatus,
   getAssessmentReminder,
+  syncNBRCPortal,
   formatDate,
   daysUntil,
   type NBRCStatus,
@@ -29,6 +31,24 @@ export function NBRCStatusCard() {
   const [reminder, setReminder] = useState<AssessmentReminder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const result = await syncNBRCPortal("ron.sublett@gmail.com", "Subber2023!");
+      setStatus(result);
+      setSyncMsg("✅ Synced from NBRC portal");
+      setTimeout(() => setSyncMsg(null), 5000);
+    } catch (err) {
+      setSyncMsg(err instanceof Error ? err.message : "Sync failed");
+      setTimeout(() => setSyncMsg(null), 5000);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +135,24 @@ export function NBRCStatusCard() {
             <div className="flex items-center gap-2 mb-1">
               <Award size={16} className="text-accent" />
               <h3 className="text-sm font-bold text-text-primary">NBRC CMP</h3>
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="ml-auto text-xs px-2 py-1 rounded-full bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50 flex items-center gap-1"
+                title="Pull fresh data from NBRC portal"
+              >
+                {syncing ? (
+                  <><Loader2 size={12} className="animate-spin" /> Syncing...</>
+                ) : (
+                  <><RefreshCw size={12} /> Sync Now</>
+                )}
+              </button>
             </div>
+            {syncMsg && (
+              <p className={`text-xs mb-2 ${syncMsg.startsWith("✅") ? "text-success" : "text-danger"}`}>
+                {syncMsg}
+              </p>
+            )}
             <div className="flex flex-wrap gap-1.5">
               {status.credentials
                 .filter((cred, _i, arr) => {

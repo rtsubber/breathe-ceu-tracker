@@ -132,10 +132,19 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
       // Extract assessment score — "Assessment Score24 / 45"
       const scoreMatch = assessText.match(/Assessment Score\s*(\d+)\s*\/\s*(\d+)/);
       if (scoreMatch) {
+        const score = parseInt(scoreMatch[1]);
+        const maxScore = parseInt(scoreMatch[2]);
+        // Calculate range from score — NBRC thresholds (out of 45):
+        // High: ≥38/45 (~85%), Mid: 30-37/45 (~67-82%), Low: <30/45 (<67%)
+        let range = 'Low';
+        const highThreshold = Math.ceil(maxScore * 0.844);  // 38/45
+        const midThreshold = Math.ceil(maxScore * 0.667);   // 30/45
+        if (score >= highThreshold) range = 'High';
+        else if (score >= midThreshold) range = 'Mid';
         result.assessments.push({
-          score: parseInt(scoreMatch[1]),
-          max: parseInt(scoreMatch[2]),
-          range: assessText.match(/(Low|Mid|High)/)?.[1] || null,
+          score: score,
+          max: maxScore,
+          range: range,
         });
       }
 
