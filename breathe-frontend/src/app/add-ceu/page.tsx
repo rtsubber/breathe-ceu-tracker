@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Camera, FileText, ArrowLeft, Check, CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
+import { Camera, FileText, ArrowLeft, Check, CheckCircle2, Loader2, AlertTriangle, Share, Download } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ceuCategories, categoryDisplay } from "@/lib/mock-data";
 import { Toast } from "@/components/toast";
@@ -176,6 +176,24 @@ export default function AddCEUPage() {
               />
             </label>
           )}
+
+          {/* iOS Shortcut — one-tap import from Notes or any app */}
+          <a
+            href="/breathe-ceu-import.shortcut"
+            download
+            className="w-full text-left block"
+          >
+            <Card className="flex items-center gap-4 p-5 hover:shadow-md transition-shadow">
+              <div className="w-14 h-14 rounded-card bg-blue-500/10 flex items-center justify-center">
+                <Share size={28} className="text-blue-500" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-lg font-bold text-text-primary">Add to Breathe (iOS)</h2>
+                <p className="text-sm text-text-secondary">Install Shortcut — scan & share from any app</p>
+              </div>
+              <Download size={20} className="text-text-secondary" />
+            </Card>
+          </a>
 
           <button onClick={() => setMode("manual")} className="w-full text-left">
             <Card className="flex items-center gap-4 p-5 hover:shadow-md transition-shadow">

@@ -1,0 +1,203 @@
+{
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettype",
+      "WFWorkflowActionParameters": {}
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFMenuItems": [
+          "Sign In",
+          "Upload Certificate",
+          "My CEUs"
+        ],
+        "WFControlFlowMode": 0
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.comment",
+      "WFWorkflowActionParameters": {
+        "WFCommentText": "=== SIGN IN ==="
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "Enter your Breathe email",
+        "WFAskActionDefaultAnswer": "",
+        "WFAskActionAllowMultipleLines": false
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "BreatheEmail"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "Enter your Breathe password",
+        "WFAskActionDefaultAnswer": "",
+        "WFAskActionAllowMultipleLines": false
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "BreathePassword"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.dictionary",
+      "WFWorkflowActionParameters": {
+        "WFDictionaryActionOutputUUID": "login-body",
+        "WFDictionaryActionEntries": [
+          {
+            "WFDictionaryKey": "email",
+            "WFDictionaryValue": {"WFVariableName": "BreatheEmail"}
+          },
+          {
+            "WFDictionaryKey": "password",
+            "WFDictionaryValue": {"WFVariableName": "BreathePassword"}
+          }
+        ]
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getcontentofurl",
+      "WFWorkflowActionParameters": {
+        "WFURL": "https://breathe.sublettlabs.com/api/auth/shortcut-token",
+        "WFHTTPMethod": "POST",
+        "WFHTTPHeaders": [
+          {"WFHTTPHeaderName": "Content-Type", "WFHTTPHeaderValue": "application/json"}
+        ],
+        "WFHTTPBody": {"WFDictionaryActionOutputUUID": "login-body"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getdictionaryvalue",
+      "WFWorkflowActionParameters": {
+        "WFDictionaryKey": "token",
+        "WFInput": {"WFVariableName": "getcontentofurl"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "BreatheToken"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "WFResultText": "Signed in! Token saved. Now share a certificate to this shortcut."
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.comment",
+      "WFWorkflowActionParameters": {
+        "WFCommentText": "=== UPLOAD CERTIFICATE ==="
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "ShortcutInput"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "CertFile"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "BreatheToken"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFMenuItems": [
+          "Sign In First",
+          "Continue Upload"
+        ],
+        "WFControlFlowMode": 0
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getcontentofurl",
+      "WFWorkflowActionParameters": {
+        "WFURL": "https://breathe.sublettlabs.com/api/ceus/ocr",
+        "WFHTTPMethod": "POST",
+        "WFHTTPHeaders": [
+          {"WFHTTPHeaderName": "Authorization", "WFHTTPHeaderValue": "Bearer {"},
+          {"WFHTTPHeaderName": "Content-Type", "WFHTTPHeaderValue": "multipart/form-data"}
+        ],
+        "WFHTTPBody": {"WFVariableName": "CertFile"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getdictionaryvalue",
+      "WFWorkflowActionParameters": {
+        "WFDictionaryKey": "title",
+        "WFInput": {"WFVariableName": "getcontentofurl"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "CEUTitle"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getdictionaryvalue",
+      "WFWorkflowActionParameters": {
+        "WFDictionaryKey": "provider",
+        "WFInput": {"WFVariableName": "getcontentofurl"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "CEUProvider"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getdictionaryvalue",
+      "WFWorkflowActionParameters": {
+        "WFDictionaryKey": "credits",
+        "WFInput": {"WFVariableName": "getcontentofurl"}
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "CEUCredits"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "WFResultText": "✅ CEU Extracted!\n\nTitle: {CEUTitle}\nProvider: {CEUProvider}\nCredits: {CEUCredits}\n\nReview and save in the Breathe app."
+      }
+    }
+  ],
+  "WFWorkflowImportQuestion": [
+    {
+      "WFImportQuestionUUID": "shortcut-input-type",
+      "WFImportQuestionText": "This shortcut accepts files from the Share Sheet. When you share a certificate image or PDF from any app, select 'Add to Breathe' to extract CEU data automatically.",
+      "WFImportQuestionDefaultAnswer": true
+    }
+  ],
+  "WFWorkflowTypes": ["NCWidget", "WatchKit"],
+  "WFWorkflowInputContentItemClasses": ["WFImageContentItem", "WFPDFContentItem"],
+  "WFWorkflowIcon": {
+    "WFWorkflowIconStartColor": 4282601983,
+    "WFWorkflowIconGlyphNumber": 59511
+  }
+}

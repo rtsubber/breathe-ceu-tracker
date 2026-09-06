@@ -514,6 +514,26 @@ def logout():
     return {"success": True}
 
 
+@app.post("/api/auth/shortcut-token", tags=["Auth"])
+def shortcut_token(payload: dict, db: SessionLocal = Depends(get_db)):
+    """Exchange email+password for a long-lived token for iOS Shortcuts.
+
+    Same as login but returns only the token (no user object),
+    so the Shortcut can store it in Keychain without persisting the password.
+    """
+    email = (payload.get("email") or "").lower().strip()
+    password = payload.get("password", "")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not user.password_hash or not verify_password(password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(user.id, user.email)
+    return {"token": token, "name": user.name}
+
+
 # ─── Password Reset ──────────────────────────────────────────────
 
 @app.post("/api/auth/forgot-password", tags=["Auth"])
